@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { parseBomWithClaude } from '@/lib/claude';
+import { parseBomWithAI } from '@/lib/ai';
 import { matchManyParts } from '@/lib/matching';
 
 export const maxDuration = 300;
@@ -14,8 +14,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '内容过长，请分批处理（单次上限 20 万字符）' }, { status: 413 });
     }
 
-    // 1. AI 清洗：把客户发来的乱格式文本提取成结构化型号列表
-    const parsedItems = await parseBomWithClaude(String(text));
+    // 1. AI 清洗：把客户发来的乱格式文本提取成结构化型号列表（内部会按行分片）
+    const parsedItems = await parseBomWithAI(String(text));
     if (!parsedItems.length) {
       return NextResponse.json(
         { error: 'AI 未能从文本中识别出任何型号，请检查内容或换一种描述方式' }, { status: 422 });

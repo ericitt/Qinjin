@@ -1,0 +1,50 @@
+# 局域网自建：一条命令把数据库和应用都跑起来
+#   docker compose up -d
+# 之后局域网内访问 http://<这台机器的IP>:3000
+#
+# 数据存在名为 qijin_pgdata 的 volume 里，容器删了数据还在。
+# 但 volume 不等于备份 —— 硬盘坏了就没了，务必配合 scripts/backup.sh。
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: qijin-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qijin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-qijin_local_pw}
+      POSTGRES_DB: qijin
+      TZ: Asia/Shanghai
+      # 中文排序和大小写处理，建库时就要定好，后面改要重建
+      LANG: C.UTF-8
+    volumes:
+      - qijin_pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    # 只绑定到本机回环，不对局域网暴露数据库端口 —— 应用通过容器网络连它
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qijin -d qijin"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: qijin-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # 走容器网络，主机名就是服务名 db
+      DATABASE_URL: postgres://qijin:${DB_PASSWORD:-qijin_local_pw}@db:5432/qijin
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-deepseek}
+      ACCESS_PASSWORD: ${ACCESS_PASSWORD:-}
+      TZ: Asia/Shanghai
+    ports:
+      - "3000:3000"
+
+volumes:
+  qijin_pgdata:
