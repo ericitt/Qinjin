@@ -59,6 +59,29 @@ sql/migrations/     增量迁移，按文件名顺序执行
 sql/seed.sql        历史数据
 ```
 
+## 部署方式
+
+| 场景 | 看哪份文档 |
+|---|---|
+| Windows 台式机自建（当前方向） | `DEPLOY-WINDOWS.md` |
+| Linux / NAS 自建 | `DEPLOY-LOCAL.md` |
+| 大陆访问问题的来龙去脉 | `DEPLOY-CHINA.md` |
+
+自建时 AI 询价必须用 DeepSeek —— Claude 的接口在大陆连不上。
+配好后先 `npm run ai:test` 验证再用。
+
+## ERP 数据自动同步
+
+`data/inbox/` 是监控目录：把龙威导出的报表丢进去，
+`sync` 服务每 5 分钟扫一次，按文件名关键词识别类型（采购/销售/供应商/客户/库存），
+自动向下填充分组报表的空白列、清洗、入库，然后归档到 `已导入/` 或 `失败/`。
+
+**重复导入是安全的**：出货记录按「日期+型号+数量+单价+客户」算自然键 `src_key`，
+配合部分唯一索引 `uq_shipments_src_key` 做 `ON CONFLICT DO NOTHING`，
+同一份全量表导多少次都不会产生重复行。供应商报价靠 `(supplier_id, part_id)` 唯一约束。
+
+手动跑一次：`npm run sync -- --once`
+
 ## 访问密码
 
 在 Vercel 的环境变量里设置 `ACCESS_PASSWORD` 即可开启门禁：

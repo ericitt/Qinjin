@@ -18,6 +18,11 @@ export async function middleware(req: NextRequest) {
   // 登录相关的路径必须放行，否则会陷入重定向循环
   if (pathname === '/login' || pathname.startsWith('/api/auth/')) return NextResponse.next();
 
+  // 自动导入服务是脚本，没有浏览器也就没有 cookie，
+  // 允许它用请求头直接带密码进来（只在局域网内部调用）
+  const headerKey = req.headers.get('x-access-key');
+  if (headerKey && headerKey === secret) return NextResponse.next();
+
   const ok = await verifyToken(req.cookies.get(AUTH_COOKIE)?.value, secret);
   if (ok) return NextResponse.next();
 

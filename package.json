@@ -10,6 +10,7 @@
     "migrate": "node scripts/seed.js --migrate-only",
     "check": "node scripts/check.js",
     "ai:test": "node scripts/ai-test.js",
+    "sync": "node scripts/watch-import.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
