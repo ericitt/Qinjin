@@ -1,9 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
 import {
   api, useAsync, Card, CardH, Badge, Empty, Note, Spinner, Modal,
-  money, int, fmt, shortDate,
+  money, pct, int, fmt, shortDate,
 } from '../components/ui';
 
 const KIND_LABEL: Record<string, { text: string; kind: string }> = {
@@ -163,20 +163,63 @@ function SupplierDetail({ s, onClose }: { s: any; onClose: () => void }) {
         </div>
       </Card>
 
-      <Card>
-        <CardH title="报价覆盖" />
-        <div className="card-b">
-          {s.quoted_parts > 0 ? (
-            <dl className="kv">
-              <dt>报价型号数</dt><dd>{int(s.quoted_parts)}</dd>
-              <dt>最低报价</dt><dd className="mono">{money(s.min_quote)}</dd>
-              <dt>最近报价</dt><dd>{shortDate(s.last_quote)}</dd>
-            </dl>
-          ) : <Empty icon="↥" text="该供应商还没有报价数据"
-                hint="在「数据导入」里导入供应商报价表" />}
-        </div>
-      </Card>
+      <SupplierParts id={s.id} />
     </Modal>
+  );
+}
+
+/** 该供应商报过的型号，以及每一条相对全市场最低价贵多少 */
+function SupplierParts({ id }: { id: number }) {
+  const [d, setD] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { api(`/api/suppliers/${id}`).then(setD).catch((e) => setErr(e.message)); }, [id]);
+
+  if (err) return <Note kind="err">{err}</Note>;
+  if (!d) return <Card><div className="card-b"><Spinner /></div></Card>;
+
+  const st = d.stats;
+  return (
+    <Card>
+      <CardH title="报价明细" sub={st.quoted ? `${st.quoted} 个型号，其中 ${st.bestCount} 个是全市场最低价` : undefined} />
+      <div className="card-b flush">
+        {d.parts?.length ? (
+          <div className="table-wrap"><table>
+            <thead><tr><th>型号</th><th className="num">报价</th><th className="num">全市场最低</th>
+              <th className="num">贵出</th><th className="num">我方售价</th>
+              <th className="num">毛利</th><th className="num">起订</th><th>报价日期</th></tr></thead>
+            <tbody>{d.parts.map((p: any) => (
+              <tr key={p.id}>
+                <td className="mono">{p.pn}
+                  {p.ship_count > 0 && <div className="muted small">出货 {p.ship_count} 次</div>}</td>
+                <td className="num mono">{money(p.price)}
+                  {p.isBest && <> <Badge kind="green">最优</Badge></>}</td>
+                <td className="num mono muted">{money(p.market_best)}</td>
+                <td className="num">
+                  {p.premiumPct == null ? '—'
+                    : p.premiumPct < 0.01 ? <span className="muted">—</span>
+                    : <span className="down">+{fmt(p.premiumPct, 1)}%</span>}
+                </td>
+                <td className="num mono">{p.our_sell_price ? money(p.our_sell_price) : <span className="muted">未售过</span>}</td>
+                <td className={`num ${p.margin != null && p.margin < 15 ? 'down' : 'up'}`}>{pct(p.margin)}</td>
+                <td className="num">{p.moq || '—'}</td>
+                <td className="muted small">{shortDate(p.quoted_at)}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        ) : <Empty icon="↥" text="该供应商还没有报价数据"
+              hint="在「数据导入」里导入采购记录或供应商报价表" />}
+      </div>
+      {st.quoted > 0 && (
+        <div className="card-b" style={{ borderTop: '1px solid var(--border)' }}>
+          <Note>
+            {st.bestCount === st.quoted
+              ? '这家在所有报过价的型号上都是最低价。'
+              : `这家有 ${st.quoted - st.bestCount} 个型号不是最低价，平均贵 ${fmt(st.avgPremium, 1)}%。` +
+                '「贵出」那一列可以直接拿去谈价。'}
+          </Note>
+        </div>
+      )}
+    </Card>
   );
 }
 

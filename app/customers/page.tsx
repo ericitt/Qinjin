@@ -1,15 +1,16 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Topbar from '../components/Topbar';
 import {
-  api, useAsync, Card, Badge, Empty, Note, Spinner, Modal,
+  api, useAsync, Card, CardH, Badge, Empty, Note, Spinner, Modal, Bars,
   money, pct, int, shortDate,
 } from '../components/ui';
 
 export default function CustomersPage() {
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
+  const [detailId, setDetailId] = useState<number | null>(null);
   const { data, loading, error, reload } = useAsync(
     () => api(`/api/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`), [q]);
 
@@ -56,7 +57,8 @@ export default function CustomersPage() {
                     <dt>最近成交</dt><dd>{shortDate(c.last_date)}</dd>
                   </dl>
                   <div className="row" style={{ marginTop: 12 }}>
-                    <Link className="btn sm" href={`/orders?customer=${c.id}`}>采购记录</Link>
+                    <button className="btn sm" onClick={() => setDetailId(c.id)}>采购画像</button>
+                    <Link className="btn sm" href={`/orders?customer=${c.id}`}>出货明细</Link>
                     <Link className="btn sm" href="/bom">为他询价</Link>
                   </div>
                 </div>
@@ -70,7 +72,98 @@ export default function CustomersPage() {
       </div>
 
       {adding && <AddCustomer onClose={() => setAdding(false)} onDone={() => { setAdding(false); reload(); }} />}
+      {detailId && <CustomerDetail id={detailId} onClose={() => setDetailId(null)} />}
     </>
+  );
+}
+
+function CustomerDetail({ id, onClose }: { id: number; onClose: () => void }) {
+  const [d, setD] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { api(`/api/customers/${id}`).then(setD).catch((e) => setErr(e.message)); }, [id]);
+
+  const c = d?.customer;
+  const savings = (d?.topParts || []).reduce((s: number, p: any) => s + (p.saving || 0), 0);
+
+  return (
+    <Modal title={c ? (c.short_name || c.name) : '客户详情'} onClose={onClose}>
+      {err && <Note kind="err">{err}</Note>}
+      {!d && !err && <Spinner />}
+      {d && (
+        <>
+          <div className="grid g4" style={{ marginBottom: 16 }}>
+            <div><div className="stat-l">累计成交</div><div className="stat" style={{ fontSize: 19 }}>{money(c.amount)}</div></div>
+            <div><div className="stat-l">出货笔数</div><div className="stat" style={{ fontSize: 19 }}>{int(c.ship_rows)}</div></div>
+            <div><div className="stat-l">涉及型号</div><div className="stat" style={{ fontSize: 19 }}>{int(c.part_kinds)}</div></div>
+            <div><div className="stat-l">整体毛利</div>
+              <div className={`stat ${c.margin_pct != null && c.margin_pct < 20 ? 'down' : 'up'}`} style={{ fontSize: 19 }}>
+                {pct(c.margin_pct)}</div></div>
+          </div>
+          <div className="muted small" style={{ marginBottom: 14 }}>
+            首次成交 {shortDate(c.first_date)} · 最近成交 {shortDate(c.last_date)}
+            {c.notes && <> · 业务员 {c.notes}</>}
+          </div>
+
+          {d.monthly?.length > 1 && (
+            <Card style={{ marginBottom: 14 }}>
+              <CardH title="成交金额走势" sub={`${d.monthly[0].ym} ~ ${d.monthly[d.monthly.length - 1].ym}`} />
+              <div className="card-b"><Bars data={d.monthly.map((m: any) => m.amount || 0)} height={80} /></div>
+            </Card>
+          )}
+
+          <Card style={{ marginBottom: 14 }}>
+            <CardH title="主力型号" sub="按成交金额排序" />
+            <div className="card-b flush">
+              {d.topParts?.length ? (
+                <div className="table-wrap"><table>
+                  <thead><tr><th>型号</th><th className="num">次数</th><th className="num">数量</th>
+                    <th className="num">成交金额</th><th className="num">成交均价</th>
+                    <th className="num">最优采购价</th><th className="num">毛利</th></tr></thead>
+                  <tbody>{d.topParts.map((p: any) => (
+                    <tr key={p.id}>
+                      <td className="mono">{p.pn}<div className="muted small">{p.brand || ''}</div></td>
+                      <td className="num">{p.times}</td>
+                      <td className="num">{int(p.qty)}</td>
+                      <td className="num mono">{money(p.amount)}</td>
+                      <td className="num mono">{money(p.avg_price)}</td>
+                      <td className="num mono">{p.best_supplier_price ? money(p.best_supplier_price)
+                        : <span className="muted">无报价</span>}</td>
+                      <td className={`num ${p.margin != null && p.margin < 15 ? 'down' : 'up'}`}>{pct(p.margin)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+              ) : <Empty icon="▤" text="这个客户还没有出货记录" />}
+            </div>
+            {savings > 0 && (
+              <div className="card-b" style={{ borderTop: '1px solid var(--border)' }}>
+                <Note>
+                  <b>降本空间约 {money(savings)}：</b>上面这些型号里，
+                  历史采购成本高于目前已知的最优供应商报价。换供应商或拿这个价去谈，差额就是净利。
+                </Note>
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <CardH title="最近出货" sub="最近 20 条" />
+            <div className="card-b flush">
+              {d.recent?.length ? (
+                <div className="table-wrap"><table>
+                  <thead><tr><th>日期</th><th>型号</th><th className="num">数量</th>
+                    <th className="num">单价</th><th className="num">成本</th></tr></thead>
+                  <tbody>{d.recent.map((r: any, i: number) => (
+                    <tr key={i}><td>{r.ship_date}</td><td className="mono">{r.pn}</td>
+                      <td className="num">{int(r.quantity)}</td>
+                      <td className="num mono">{money(r.unit_price)}</td>
+                      <td className="num mono muted">{money(r.unit_cost)}</td></tr>
+                  ))}</tbody>
+                </table></div>
+              ) : <Empty icon="▤" text="暂无记录" />}
+            </div>
+          </Card>
+        </>
+      )}
+    </Modal>
   );
 }
 

@@ -1,14 +1,26 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Topbar from '../components/Topbar';
 import {
   api, Card, Badge, Empty, Note, Spinner, Pager, Stat,
   money, pct, int,
 } from '../components/ui';
 
+// useSearchParams 要求包在 Suspense 里，否则整页会退化成动态渲染并报警告
 export default function OrdersPage() {
+  return (
+    <Suspense fallback={<><Topbar title="出货明细" sub="历史出货流水" /><div className="page"><Spinner /></div></>}>
+      <Orders />
+    </Suspense>
+  );
+}
+
+function Orders() {
+  const sp = useSearchParams();
   const [q, setQ] = useState('');
-  const [customerId, setCustomerId] = useState('');
+  // 从客户页点「采购记录」跳过来时带着 ?customer=<id>，之前这个参数被忽略了
+  const [customerId, setCustomerId] = useState(sp.get('customer') || '');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
