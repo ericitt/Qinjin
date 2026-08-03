@@ -64,9 +64,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({
       customer: {
         ...c,
-        // 只对有成本的部分算毛利，同时把覆盖率给出去，让人知道这个数字有多可信
+        // 注意字段名要对上外层 SELECT 的别名：出货笔数在外层叫 ship_rows，不叫 n
         margin_pct: c.amount_costed > 0 ? ((c.amount_costed - c.cost) / c.amount_costed) * 100 : null,
-        cost_coverage: c.n > 0 ? (c.n_with_cost / c.n) * 100 : null,
+        cost_coverage: c.ship_rows > 0 ? (c.n_with_cost / c.ship_rows) * 100 : null,
       },
       topParts: topParts.rows.map((r: any) => ({
         ...r,
