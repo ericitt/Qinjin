@@ -58,7 +58,10 @@ export const FIELD_DEFS: Record<ImportKind, FieldDef[]> = {
     { key: 'stock_qty', label: '库存', required: false },
   ],
   suppliers: [
-    { key: 'company_name', label: '供应商名称', required: true },
+    // 注意：这里要填 ERP 里的「编号」，因为采购单引用的是编号而不是公司全称。
+    // 用全称导入会新建一批重复供应商，而不是给已有的补联系方式。
+    { key: 'company_name', label: '供应商名称', required: true, hint: '要和采购单里的写法一致（通常是 ERP 的「编号」）' },
+    { key: 'notes', label: '公司全称/备注', required: false },
     { key: 'contact_name', label: '联系人', required: false },
     { key: 'phone', label: '电话', required: false },
     { key: 'region', label: '地区', required: false },
@@ -140,7 +143,8 @@ const ALIASES: Record<string, string[]> = {
   catalog_cost: ['目录成本', '参考成本', '成本'],
   standard_price: ['标准售价', '参考售价', '标准价'],
   stock_qty: ['库存', '现存量', '库存数量', 'stock'],
-  company_name: ['供应商名称', '公司名称', '名称', 'company'],
+  company_name: ['供应商名称', '供应商编号', '编号', '公司名称', '名称', 'company'],
+  notes: ['备注', '公司全称', '全称', 'notes', 'remark'],
   contact_name: ['联系人', '业务员', 'contact'],
   phone: ['电话', '手机', '联系电话', 'phone', 'tel'],
   region: ['地区', '区域', '所在地', 'region'],
