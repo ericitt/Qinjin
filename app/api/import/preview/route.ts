@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  parseDelimited, suggestMapping, buildRows, enrichIssues, summarize, FIELD_DEFS,
+  parseDelimited, suggestMapping, buildRows, enrichIssues, summarize,
+  guessKind, KIND_LABEL, FIELD_DEFS,
 } from '@/lib/import';
 import type { ImportKind, PreviewResult } from '@/lib/import';
 
@@ -31,6 +32,22 @@ export async function POST(req: NextRequest) {
       ? userMapping
       : suggestMapping(kind as ImportKind, headers);
 
+    // 选错类型是最容易犯的错。与其甩一堆「缺少必填字段」，不如直接告诉用户
+    // 这份文件更像哪一类 —— 判断依据是必填字段能不能在表头里找到。
+    const missingRequired = FIELD_DEFS[kind as ImportKind]
+      .filter((f) => f.required && !mapping[f.key]).map((f) => f.label);
+    let kindHint: { suggest: ImportKind; suggestLabel: string; missing: string[] } | null = null;
+    if (missingRequired.length) {
+      const best = guessKind(headers)[0];
+      if (best && best.kind !== kind && best.score >= 100) {
+        kindHint = {
+          suggest: best.kind,
+          suggestLabel: KIND_LABEL[best.kind],
+          missing: missingRequired,
+        };
+      }
+    }
+
     const { rows, issues } = buildRows(kind as ImportKind, table, mapping);
     await enrichIssues(kind as ImportKind, rows, issues);
 
@@ -49,7 +66,12 @@ export async function POST(req: NextRequest) {
       issues: issues.slice(0, 200),
       issueSummary: summarize(issues),
     };
-    return NextResponse.json({ ...result, fields: FIELD_DEFS[kind as ImportKind] });
+    return NextResponse.json({
+      ...result,
+      fields: FIELD_DEFS[kind as ImportKind],
+      missingRequired,
+      kindHint,
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

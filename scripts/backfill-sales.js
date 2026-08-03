@@ -67,14 +67,12 @@ function parseFile(file) {
 async function main() {
   const rows = parseFile(path.resolve(input));
   const customers = [...new Set(rows.map((r) => r.cust).filter(Boolean))];
-  console.log(`读取 ${rows.length} 行，${customers.length} 个客户，` +
-    `日期 ${rows[0].date} ~ ${rows[rows.length - 1].date}`);
+  const from = rows.reduce((a, r) => (r.date < a ? r.date : a), rows[0].date);
+  const to = rows.reduce((a, r) => (r.date > a ? r.date : a), rows[0].date);
+  console.log(`读取 ${rows.length} 行，${customers.length} 个客户，日期 ${from} ~ ${to}`);
 
   const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
   await client.connect();
-
-  const from = rows.reduce((a, r) => (r.date < a ? r.date : a), rows[0].date);
-  const to = rows.reduce((a, r) => (r.date > a ? r.date : a), rows[0].date);
 
   // 把库里同期的出货记录连同型号一起拉出来
   const { rows: db } = await client.query(

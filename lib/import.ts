@@ -269,14 +269,47 @@ export async function enrichIssues(kind: ImportKind, rows: ParsedRow[], issues: 
 }
 
 export function summarize(issues: RowIssue[]) {
-  const m = new Map<string, { msg: string; count: number; level: string }>();
+  // 只把「同一类 + 同一字段」的问题合并。
+  // 之前这里把 「物料型号」和「采购单价」都归一成「…」再当 key，
+  // 结果两种不同的缺字段被合并成一行、还只显示其中一个字段名，
+  // 数字看起来比行数还多（1015 行报 2030），非常误导人。
+  const m = new Map<string, { msg: string; count: number; level: string; field?: string }>();
   for (const it of issues) {
-    const key = it.level + '|' + it.msg.replace(/：.*$/, '').replace(/「[^」]*」/g, '「…」');
-    if (!m.has(key)) m.set(key, { msg: it.msg.replace(/：.*$/, ''), count: 0, level: it.level });
+    const base = it.msg.replace(/：.*$/, '');
+    const key = `${it.level}|${it.field || ''}|${base}`;
+    if (!m.has(key)) m.set(key, { msg: base, count: 0, level: it.level, field: it.field });
     m.get(key)!.count++;
   }
   return Array.from(m.values()).sort((a, b) => b.count - a.count);
 }
+
+/**
+ * 猜这份文件更像哪一种导入类型。
+ * 判断依据：该类型的必填字段有多少能在表头里映射上。
+ * 用来在用户选错类型时给出提示，而不是甩一堆「缺少必填字段」了事。
+ */
+export function guessKind(headers: string[]): { kind: ImportKind; score: number }[] {
+  const out: { kind: ImportKind; score: number }[] = [];
+  for (const k of Object.keys(FIELD_DEFS) as ImportKind[]) {
+    const map = suggestMapping(k, headers);
+    const req = FIELD_DEFS[k].filter((f) => f.required);
+    const hitReq = req.filter((f) => map[f.key]).length;
+    const hitAll = FIELD_DEFS[k].filter((f) => map[f.key]).length;
+    // 必填字段全中才算候选，再用命中总数做细分
+    const score = (req.length ? hitReq / req.length : 0) * 100 + hitAll;
+    out.push({ kind: k, score });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+export const KIND_LABEL: Record<ImportKind, string> = {
+  purchases: '采购记录',
+  supplier_quotes: '供应商报价',
+  shipments: '出货流水',
+  parts: '物料主数据',
+  suppliers: '供应商档案',
+  customers: '客户档案',
+};
 
 export async function nextBatchNo(kind: ImportKind): Promise<string> {
   const d = new Date();

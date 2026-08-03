@@ -57,14 +57,20 @@ export default function ImportPage() {
     r.readAsText(f, 'utf-8');
   };
 
-  const doPreview = async () => {
+  const doPreview = async (k = kind) => {
     setBusy(true); setErr(null);
     try {
       const p: any = await api('/api/import/preview', {
-        method: 'POST', body: JSON.stringify({ kind, text }),
+        method: 'POST', body: JSON.stringify({ kind: k, text }),
       });
       setPreview(p); setMapping(p.suggestedMapping || {});
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  // 用户选错类型时，一键切到系统猜的那个并重新校验
+  const switchKind = async (k: string) => {
+    setKind(k); setPreview(null); setDone(null);
+    await doPreview(k);
   };
 
   const doCommit = async () => {
@@ -206,6 +212,23 @@ export default function ImportPage() {
                 <Card>
                   <CardH title="3 · 校验结果" />
                   <div className="card-b">
+                    {preview.kindHint && (
+                      <Note kind="err">
+                        <b>类型可能选错了。</b>这份文件里找不到「{preview.kindHint.missing.join('」「')}」列，
+                        但它的表头很像<b>「{preview.kindHint.suggestLabel}」</b>。
+                        <div style={{ marginTop: 8 }}>
+                          <button className="btn sm" onClick={() => switchKind(preview.kindHint.suggest)}>
+                            改用「{preview.kindHint.suggestLabel}」重新校验
+                          </button>
+                        </div>
+                      </Note>
+                    )}
+                    {!preview.kindHint && preview.missingRequired?.length > 0 && (
+                      <Note kind="warn">
+                        <b>缺少必填列：</b>{preview.missingRequired.join('、')}。
+                        请在上面的「字段映射」里手动指定，或换一份包含这些列的文件。
+                      </Note>
+                    )}
                     <div className="grid g3" style={{ gap: 10, marginBottom: 14 }}>
                       <div><div className="stat-l">可直接入库</div>
                         <div className="stat up" style={{ fontSize: 19 }}>{int(preview.okCount)}</div></div>
