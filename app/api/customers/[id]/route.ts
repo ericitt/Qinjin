@@ -13,6 +13,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
                 coalesce(s.n,0)::int AS ship_rows,
                 coalesce(s.amount,0)::float AS amount,
                 coalesce(s.cost,0)::float AS cost,
+                coalesce(s.n_with_cost,0)::int AS n_with_cost,
+                coalesce(s.amount_costed,0)::float AS amount_costed,
                 s.first_date::text AS first_date,
                 s.last_date::text  AS last_date,
                 coalesce(s.parts,0)::int AS part_kinds
