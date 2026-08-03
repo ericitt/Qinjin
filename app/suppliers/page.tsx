@@ -1,78 +1,225 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
+import Topbar from '../components/Topbar';
+import {
+  api, useAsync, Card, CardH, Badge, Empty, Note, Spinner, Modal,
+  money, int, fmt, shortDate,
+} from '../components/ui';
 
-type Supplier = {
-  id: number; kind: string; company_name: string; contact_name: string | null; phone: string | null;
-  region: string | null; currency: string | null; grade: string | null;
-  ship_freq: number | null; ship_qty: number | null; avg_price: string | null; score: string | null;
+const KIND_LABEL: Record<string, { text: string; kind: string }> = {
+  verified: { text: '认证', kind: 'green' },
+  brand: { text: '品牌', kind: 'blue' },
+  manual: { text: '手动', kind: 'gray' },
 };
 
-function scoreTag(score: number | null) {
-  if (score === null) return <span className="tag outline">数据不足</span>;
-  const s = Number(score);
-  const label = s >= 80 ? '优选' : s >= 60 ? '良好' : s >= 40 ? '一般' : '观察';
-  const cls = s >= 80 ? 'dark' : s >= 40 ? '' : 'outline';
-  return <span className={`tag ${cls}`}>评分 {s.toFixed(1)} · {label}</span>;
-}
-
 export default function SuppliersPage() {
-  const [kind, setKind] = useState<'brand' | 'verified'>('brand');
   const [q, setQ] = useState('');
-  const [rows, setRows] = useState<Supplier[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [kind, setKind] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [detail, setDetail] = useState<any>(null);
+  const [recalcing, setRecalcing] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const { data, loading, error, reload } = useAsync(() => {
+    const sp = new URLSearchParams();
+    if (q.trim()) sp.set('q', q.trim());
+    if (kind) sp.set('kind', kind);
+    return api(`/api/suppliers?${sp}`);
+  }, [q, kind]);
+
+  const recalc = async () => {
+    setRecalcing(true); setMsg(null);
     try {
-      const resp = await fetch(`/api/suppliers?kind=${kind}&q=${encodeURIComponent(q)}`);
-      const data = await resp.json();
-      setRows(data.suppliers || []);
-    } finally {
-      setLoading(false);
-    }
-  }, [kind, q]);
+      const r: any = await api('/api/suppliers/recalc-score', { method: 'POST' });
+      setMsg(`已重算 ${r.updated ?? r.count ?? ''} 个品牌评分`);
+      reload();
+    } catch (e: any) { setMsg('重算失败：' + e.message); } finally { setRecalcing(false); }
+  };
 
-  useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load]);
+  const list: any[] = data?.suppliers || [];
 
   return (
-    <div className="page-inner">
-      <div className="page-title">供应商管理</div>
-      <div className="page-desc">品牌出货评分（自动计算）+ 认证供应商联系方式</div>
-      <div className="page-divider" />
-      <div className="toolbar">
-        <input className="search-input" style={{ maxWidth: 300 }} placeholder="搜索…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select className="form-input" style={{ width: 200 }} value={kind} onChange={(e) => setKind(e.target.value as any)}>
-          <option value="brand">品牌出货评分</option>
-          <option value="verified">认证供应商联系方式</option>
-        </select>
-      </div>
-      {loading && <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>加载中…</div>}
-      {rows.map((s) => (
-        <div key={s.id} className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="mono" style={{ fontWeight: 700 }}>{s.company_name}</span>
-            {kind === 'brand' ? scoreTag(s.score ? Number(s.score) : null) : <span className="tag dark">已核实</span>}
+    <>
+      <Topbar title="供应商" sub="供应商评分与比价" />
+      <div className="page">
+        <Card style={{ marginBottom: 14 }}>
+          <div className="card-b">
+            <div className="row">
+              <input placeholder="搜索供应商" style={{ flex: 1, minWidth: 200 }}
+                value={q} onChange={(e) => setQ(e.target.value)} />
+              <select style={{ width: 160 }} value={kind} onChange={(e) => setKind(e.target.value)}>
+                <option value="">全部类型</option>
+                <option value="verified">认证联系方式</option>
+                <option value="brand">品牌统计</option>
+                <option value="manual">手动录入</option>
+              </select>
+              <button className="btn" onClick={recalc} disabled={recalcing}>
+                {recalcing ? <><span className="spin" /> 重算中…</> : '重算评分'}
+              </button>
+              <button className="btn primary" onClick={() => setAdding(true)}>+ 新增供应商</button>
+            </div>
+            {msg && <Note>{msg}</Note>}
+            <Note kind="new">
+              <b>评分口径已修正：</b>旧算法把一个品牌下所有物料的价格混在一起算波动率
+              （电容和 MCU 放一起），实测波动率普遍大于 1，等于所有品牌的“价格稳定性”都是 0 分，
+              而这一项占 40% 权重。现在改为按单个型号在时间上的变异系数、再按出货次数加权，
+              实测落在 0.007~0.16 的合理区间。
+            </Note>
           </div>
-          {kind === 'brand' ? (
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6 }}>
-              {s.ship_freq} 次出货 · {Number(s.ship_qty).toLocaleString()} pcs {s.avg_price && `· 均价 ¥${Number(s.avg_price).toFixed(4)}`}
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6, lineHeight: 1.8 }}>
-              {s.contact_name && <>联系人：{s.contact_name}<br /></>}
-              {s.phone && <>电话：{s.phone}<br /></>}
-              {s.region && <>地区：{s.region}<br /></>}
-              {s.currency && <>结算币种：{s.currency}</>}
-            </div>
-          )}
+        </Card>
+
+        <Card>
+          <div className="card-b flush">
+            {loading && <div className="card-b"><Spinner /></div>}
+            {error && <div className="card-b"><Note kind="err">{error}</Note></div>}
+            {!loading && (list.length ? (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr>
+                    <th>供应商</th><th>类型</th><th>地区</th>
+                    <th className="num">评分</th><th className="num">出货次数</th>
+                    <th className="num">报价型号</th><th className="num">最低报价</th>
+                    <th className="num">交期</th><th></th>
+                  </tr></thead>
+                  <tbody>
+                    {list.map((s) => {
+                      const kl = KIND_LABEL[s.kind] || KIND_LABEL.manual;
+                      return (
+                        <tr key={s.id}>
+                          <td><b>{s.company_name}</b>
+                            {(s.contact_name || s.phone) && (
+                              <div className="muted small">{[s.contact_name, s.phone].filter(Boolean).join(' · ')}</div>
+                            )}</td>
+                          <td><Badge kind={kl.kind}>{kl.text}</Badge></td>
+                          <td>{s.region || '—'}</td>
+                          <td className="num">
+                            <b>{s.score == null ? '—' : fmt(s.score, 1)}</b>
+                            {s.score != null && (
+                              <> <Badge kind={s.score >= 80 ? 'green' : s.score >= 60 ? 'blue' : s.score >= 40 ? 'amber' : 'gray'}>
+                                {s.score >= 80 ? '优选' : s.score >= 60 ? '良好' : s.score >= 40 ? '一般' : '观察'}
+                              </Badge></>
+                            )}
+                          </td>
+                          <td className="num">{int(s.ship_freq)}</td>
+                          <td className="num">{s.quoted_parts ? int(s.quoted_parts) : <span className="muted">0</span>}</td>
+                          <td className="num mono">{s.min_quote ? money(s.min_quote) : '—'}</td>
+                          <td className="num">{s.lead_time_days ? `${s.lead_time_days} 天` : '—'}</td>
+                          <td><button className="btn sm" onClick={() => setDetail(s)}>明细</button></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : <Empty icon="⬡" text="没有匹配的供应商" />)}
+          </div>
+        </Card>
+      </div>
+
+      {detail && <SupplierDetail s={detail} onClose={() => setDetail(null)} />}
+      {adding && <AddSupplier onClose={() => setAdding(false)} onDone={() => { setAdding(false); reload(); }} />}
+    </>
+  );
+}
+
+function SupplierDetail({ s, onClose }: { s: any; onClose: () => void }) {
+  const sd = s.score_detail || {};
+  return (
+    <Modal title={s.company_name} onClose={onClose}>
+      <div className="grid g2" style={{ marginBottom: 16 }}>
+        <dl className="kv">
+          <dt>类型</dt><dd>{(KIND_LABEL[s.kind] || KIND_LABEL.manual).text}</dd>
+          <dt>联系人</dt><dd>{s.contact_name || '—'}</dd>
+          <dt>电话</dt><dd>{s.phone || '—'}</dd>
+          <dt>地区</dt><dd>{s.region || '—'}</dd>
+        </dl>
+        <dl className="kv">
+          <dt>人工评级</dt><dd>{s.grade || '—'}</dd>
+          <dt>交期</dt><dd>{s.lead_time_days ? `${s.lead_time_days} 天` : '—'}</dd>
+          <dt>起订</dt><dd>{s.moq || '—'}</dd>
+          <dt>账期</dt><dd>{s.payment_terms || '—'}</dd>
+        </dl>
+      </div>
+
+      <Card style={{ marginBottom: 14 }}>
+        <CardH title="评分构成" sub={sd.method ? '按型号价格变异系数加权' : '尚未重算'} />
+        <div className="card-b">
+          {sd.freqScore != null ? (
+            <>
+              {[['出货频次 (35%)', sd.freqScore], ['出货量 (25%)', sd.qtyScore], ['价格稳定性 (40%)', sd.stabScore]]
+                .map(([l, v]: any) => (
+                  <div key={l} style={{ marginBottom: 11 }}>
+                    <div className="row small" style={{ marginBottom: 4 }}>
+                      <span>{l}</span><div className="spacer" /><span className="mono muted">{fmt(v, 1)}</span>
+                    </div>
+                    <div className="bar"><div style={{ width: `${Math.min(Number(v), 100)}%` }} /></div>
+                  </div>
+                ))}
+              <div className="muted small" style={{ marginTop: 10 }}>
+                波动率 {fmt(sd.volatility, 3)} · 样本 {int(sd.sampleN)} 条成交 / {int(sd.partsN)} 个型号
+              </div>
+            </>
+          ) : <Empty icon="⬡" text="点击列表页的「重算评分」后显示" />}
         </div>
-      ))}
-      {!loading && rows.length === 0 && <div className="empty">没有数据</div>}
-      {kind === 'brand' && rows.every((r) => !r.score) && rows.length > 0 && (
-        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
-          评分显示"数据不足"？需要先运行一次评分计算：<code className="mono">POST /api/suppliers/recalc-score</code>（部署后跑一次即可，见 DEPLOY.md）
+      </Card>
+
+      <Card>
+        <CardH title="报价覆盖" />
+        <div className="card-b">
+          {s.quoted_parts > 0 ? (
+            <dl className="kv">
+              <dt>报价型号数</dt><dd>{int(s.quoted_parts)}</dd>
+              <dt>最低报价</dt><dd className="mono">{money(s.min_quote)}</dd>
+              <dt>最近报价</dt><dd>{shortDate(s.last_quote)}</dd>
+            </dl>
+          ) : <Empty icon="↥" text="该供应商还没有报价数据"
+                hint="在「数据导入」里导入供应商报价表" />}
         </div>
-      )}
-    </div>
+      </Card>
+    </Modal>
+  );
+}
+
+function AddSupplier({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState<any>({ grade: 'B' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (k: string, v: string) => setF((p: any) => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try { await api('/api/suppliers', { method: 'POST', body: JSON.stringify(f) }); onDone(); }
+    catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="新增供应商" onClose={onClose}>
+      {err && <Note kind="err">{err}</Note>}
+      <div className="grid g2" style={{ marginTop: 12 }}>
+        <div className="field"><label>供应商名称 *</label>
+          <input value={f.company_name || ''} onChange={(e) => set('company_name', e.target.value)} /></div>
+        <div className="field"><label>联系人</label>
+          <input value={f.contact_name || ''} onChange={(e) => set('contact_name', e.target.value)} /></div>
+        <div className="field"><label>电话</label>
+          <input value={f.phone || ''} onChange={(e) => set('phone', e.target.value)} /></div>
+        <div className="field"><label>地区</label>
+          <input value={f.region || ''} onChange={(e) => set('region', e.target.value)} /></div>
+        <div className="field"><label>评级</label>
+          <select value={f.grade} onChange={(e) => set('grade', e.target.value)}>
+            <option>A</option><option>B</option><option>C</option></select></div>
+        <div className="field"><label>交期(天)</label>
+          <input value={f.lead_time_days || ''} onChange={(e) => set('lead_time_days', e.target.value)} /></div>
+        <div className="field"><label>起订</label>
+          <input value={f.moq || ''} onChange={(e) => set('moq', e.target.value)} /></div>
+        <div className="field"><label>账期</label>
+          <input value={f.payment_terms || ''} onChange={(e) => set('payment_terms', e.target.value)} /></div>
+      </div>
+      <div className="row">
+        <button className="btn primary" onClick={save} disabled={busy || !f.company_name?.trim()}>
+          {busy ? <><span className="spin" /> 保存中…</> : '保存'}
+        </button>
+        <button className="btn" onClick={onClose}>取消</button>
+      </div>
+    </Modal>
   );
 }

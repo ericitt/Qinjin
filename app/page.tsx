@@ -1,201 +1,156 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import Topbar from './components/Topbar';
+import {
+  api, useAsync, Card, CardH, Stat, Badge, Bars, Spinner, Empty, Note,
+  money, pct, int, OUTCOME_LABEL,
+} from './components/ui';
 
-type Part = {
-  id: number;
-  pn: string;
-  spec: string | null;
-  cat: string | null;
-  brand: string | null;
-  stock_qty: string | null;
-  catalog_cost: string | null;
-  standard_price: string | null;
-  has_actual_sale: boolean;
-};
-
-type DetailResult = {
-  part: Part;
-  shipStats: { ship_count: number; total_qty: number; avg_price: number | null; min_price: number | null; max_price: number | null; last_date: string | null } | null;
-  unitPrice: number | null;
-  cost: number | null;
-  margin: number | null;
-  bomInfo: { driver_model: string; designator: string | null; qty_per_unit: number; alt_pns: string[] | null }[];
-  recentShipments: { ship_date: string; quantity: string; unit_price: string }[];
-  supplierQuotes: { company_name: string; grade: string | null; phone: string | null; contact_name: string | null; price: string }[];
-};
-
-export default function HomePage() {
-  const [q, setQ] = useState('');
-  const [results, setResults] = useState<Part[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [detail, setDetail] = useState<DetailResult | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-
-  const doSearch = useCallback(async (query: string) => {
-    if (!query.trim()) { setResults([]); return; }
-    setLoading(true);
-    try {
-      const resp = await fetch(`/api/parts/search?q=${encodeURIComponent(query)}&limit=100`);
-      const data = await resp.json();
-      setResults(data.parts || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => doSearch(q), 250); // 简单防抖，别每敲一个字就打一次库
-    return () => clearTimeout(t);
-  }, [q, doSearch]);
-
-  async function openDetail(pn: string) {
-    setDetailLoading(true);
-    setDetail(null);
-    try {
-      const resp = await fetch(`/api/parts/${encodeURIComponent(pn)}`);
-      const data = await resp.json();
-      if (data.part) setDetail(data);
-    } finally {
-      setDetailLoading(false);
-    }
-  }
+export default function Home() {
+  const { data, loading, error } = useAsync(() => api('/api/dashboard'), []);
 
   return (
-    <div className="page-inner">
-      <div className="page-title">客户询价快查</div>
-      <div className="page-desc">实时查询数据库 — 不再是导出快照，随时都是最新数据</div>
-      <div className="page-divider" />
-
-      <input
-        className="search-input"
-        style={{ maxWidth: 480, marginBottom: 20 }}
-        placeholder="输入型号、规格或品牌…"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        autoFocus
-      />
-
-      {loading && <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>查询中…</div>}
-
-      {!loading && q && results.length === 0 && <div className="empty">未找到"{q}"相关物料</div>}
-
-      <div style={{ display: 'grid', gridTemplateColumns: detail ? '1fr 1fr' : '1fr', gap: 20 }}>
-        <div>
-          {results.map((p) => (
-            <div key={p.id} className="card" style={{ cursor: 'pointer' }} onClick={() => openDetail(p.pn)}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span className="mono" style={{ fontWeight: 700, fontSize: 14 }}>{p.pn}</span>
-                    {p.cat && <span className="tag">{p.cat}</span>}
-                    {p.brand && <span className="tag">{p.brand}</span>}
-                    {!p.has_actual_sale && <span className="tag outline">目录参考价·未出货过</span>}
-                    {p.stock_qty && Number(p.stock_qty) > 0 && <span className="tag dark">现货 {Math.round(Number(p.stock_qty)).toLocaleString()}</span>}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{p.spec}</div>
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div className="mono" style={{ fontSize: 14, fontWeight: 700 }}>
-                    {p.standard_price && Number(p.standard_price) > 0 ? `¥${Number(p.standard_price).toFixed(4)}` : '—'}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)' }}>参考价</div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {detail && (
-          <div className="card" style={{ position: 'sticky', top: 20, alignSelf: 'flex-start' }}>
-            {detailLoading ? (
-              <div className="empty">加载中…</div>
-            ) : (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span className="mono" style={{ fontSize: 16, fontWeight: 700 }}>{detail.part.pn}</span>
-                  <button className="btn" onClick={() => setDetail(null)}>✕</button>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', margin: '4px 0 16px' }}>{detail.part.spec}</div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-                  <Stat label="成本参考" value={detail.cost ? `¥${detail.cost.toFixed(4)}` : '—'} />
-                  <Stat label="对比价格" value={detail.unitPrice ? `¥${detail.unitPrice.toFixed(4)}` : '—'} />
-                  <Stat label="估算毛利率" value={detail.margin !== null ? `${detail.margin.toFixed(1)}%` : '—'} warn={detail.margin !== null && detail.margin < 15} />
-                  <Stat label="当前库存" value={detail.part.stock_qty && Number(detail.part.stock_qty) > 0 ? `${Math.round(Number(detail.part.stock_qty)).toLocaleString()} pcs` : '0'} />
-                </div>
-
-                {detail.shipStats && (
-                  <>
-                    <SectionTitle>出货历史</SectionTitle>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                      <Stat label="出货次数" value={String(detail.shipStats.ship_count)} />
-                      <Stat label="累计出货量" value={`${Math.round(detail.shipStats.total_qty).toLocaleString()} pcs`} />
-                    </div>
-                    <div className="table-wrap">
-                      <table>
-                        <thead><tr><th>日期</th><th style={{ textAlign: 'right' }}>数量</th><th style={{ textAlign: 'right' }}>单价</th></tr></thead>
-                        <tbody>
-                          {detail.recentShipments.map((h, i) => (
-                            <tr key={i}>
-                              <td className="mono">{h.ship_date}</td>
-                              <td style={{ textAlign: 'right' }} className="mono">{Number(h.quantity).toLocaleString()}</td>
-                              <td style={{ textAlign: 'right' }} className="mono">¥{Number(h.unit_price)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )}
-
-                {detail.bomInfo.length > 0 && (
-                  <>
-                    <SectionTitle>BOM 归属</SectionTitle>
-                    {detail.bomInfo.map((b, i) => (
-                      <div key={i} style={{ fontSize: 12, marginBottom: 4 }}>
-                        <span className="mono">{b.driver_model}</span> · {b.designator} · 单套 {b.qty_per_unit} 颗
-                        {b.alt_pns && b.alt_pns.length > 0 && (
-                          <div style={{ marginTop: 4 }}>
-                            替代料：{b.alt_pns.map((a) => (
-                              <span key={a} className="tag" style={{ marginRight: 4, cursor: 'pointer' }} onClick={() => { setQ(a); openDetail(a); }}>{a}</span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </>
-                )}
-
-                {detail.supplierQuotes.length > 0 && (
-                  <>
-                    <SectionTitle>供应商报价</SectionTitle>
-                    {detail.supplierQuotes.map((s, i) => (
-                      <div key={i} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                        <span>{s.company_name} {s.grade && <span className="tag">{s.grade}级</span>}</span>
-                        <span className="mono" style={{ fontWeight: 700 }}>¥{Number(s.price).toFixed(4)}</span>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
+    <>
+      <Topbar title="工作台" sub="今日概览" />
+      <div className="page">
+        {loading && <Card><div className="card-b"><Spinner /></div></Card>}
+        {error && <Note kind="err">加载失败：{error}</Note>}
+        {data && <Body d={data} />}
       </div>
-    </div>
+    </>
   );
 }
 
-function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+function Body({ d }: { d: any }) {
+  const k = d.kpi || {};
+  const t = d.todos || {};
+  const rev: any[] = d.revenueTrend || [];
+  const mq: any[] = d.matchQuality || [];
+  const mqTotal = mq.reduce((s, x) => s + x.n, 0);
+
+  const MQ_ORDER = [
+    { k: 'exact', label: '出货过', color: 'var(--green)' },
+    { k: 'alias', label: '历史别名', color: 'var(--purple)' },
+    { k: 'catalog', label: '目录价', color: 'var(--blue)' },
+    { k: 'partial', label: '模糊命中', color: 'var(--amber)' },
+    { k: 'none', label: '未找到', color: 'var(--red)' },
+  ];
+
+  const noTodo = !t.dup_groups && !t.parts_no_quote && !t.ship_no_customer && !t.bad_price && !t.stale_quotes;
+
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: '8px 10px' }}>
-      <div style={{ fontSize: 10, color: 'var(--text3)' }}>{label}</div>
-      <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: warn ? '#a00' : 'var(--text)' }}>{value}</div>
-    </div>
+    <>
+      <div className="grid g4" style={{ marginBottom: 14 }}>
+        <Stat label="本月询价单" value={int(k.inq_month)}
+          delta={k.inqDelta === 0 ? '与上月持平' : `较上月 ${k.inqDelta > 0 ? '+' : ''}${k.inqDelta}`}
+          tone={k.inqDelta > 0 ? 'up' : k.inqDelta < 0 ? 'down' : undefined} />
+        <Stat label="本月成交率" value={k.winRate === null || k.winRate === undefined ? '—' : pct(k.winRate)}
+          delta={`已结案 ${int(k.closed_month)} 单`} />
+        <Stat label="本月毛利率" value={k.margin_month === null || k.margin_month === undefined ? '—' : pct(k.margin_month)}
+          delta="按已确认报价单统计" />
+        <Stat label="进行中询价" value={int(k.open_inq)}
+          delta={t.stale_quotes > 0 ? `${t.stale_quotes} 单超 3 天未跟进` : '均在跟进中'}
+          tone={t.stale_quotes > 0 ? 'down' : undefined} />
+      </div>
+
+      <div className="grid g2" style={{ marginBottom: 14 }}>
+        <Card>
+          <CardH title="近半年成交金额" sub="仅统计有效价格记录" />
+          <div className="card-b">
+            {rev.length ? (
+              <>
+                <Bars data={rev.map((r) => r.amount || 0)} height={110} />
+                <div className="row small muted" style={{ marginTop: 8, justifyContent: 'space-between' }}>
+                  {rev.map((r) => <span key={r.ym}>{r.ym.slice(5)}月</span>)}
+                </div>
+                <div className="row" style={{ marginTop: 10 }}>
+                  <span className="muted small">最近一月</span>
+                  <b className="mono">{money(rev[rev.length - 1]?.amount)}</b>
+                </div>
+              </>
+            ) : <Empty icon="▤" text="暂无出货数据" />}
+          </div>
+        </Card>
+
+        <Card>
+          <CardH title="询价匹配质量" sub="近 90 天" />
+          <div className="card-b">
+            {mqTotal ? MQ_ORDER.map((o) => {
+              const n = mq.find((x) => x.match_type === o.k)?.n || 0;
+              const p = (n / mqTotal) * 100;
+              return (
+                <div key={o.k} style={{ marginBottom: 11 }}>
+                  <div className="row small" style={{ marginBottom: 4 }}>
+                    <span>{o.label}</span><div className="spacer" />
+                    <span className="mono muted">{n} · {pct(p)}</span>
+                  </div>
+                  <div className="bar"><div style={{ width: `${p}%`, background: o.color }} /></div>
+                </div>
+              );
+            }) : <Empty icon="✦" text="还没有确认过的询价单" hint="在 AI 询价助手里确认一单后，这里开始统计" />}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid g2">
+        <Card>
+          <CardH title="待办" />
+          <div className="card-b flush">
+            <div className="table-wrap"><table><tbody>
+              {t.dup_groups > 0 && (
+                <tr><td><Badge kind="red">数据</Badge></td>
+                  <td>检测到 {t.dup_groups} 组重复型号，会拆散成交历史</td>
+                  <td className="num"><Link href="/data-health" className="btn sm">去处理</Link></td></tr>
+              )}
+              {t.parts_no_quote > 0 && (
+                <tr><td><Badge kind="amber">报价</Badge></td>
+                  <td>{int(t.parts_no_quote)} 个物料没有任何供应商报价</td>
+                  <td className="num"><Link href="/import" className="btn sm">去导入</Link></td></tr>
+              )}
+              {t.ship_no_customer > 0 && (
+                <tr><td><Badge kind="blue">客户</Badge></td>
+                  <td>{int(t.ship_no_customer)} 条出货记录还没关联客户</td>
+                  <td className="num"><Link href="/import" className="btn sm">去补全</Link></td></tr>
+              )}
+              {t.bad_price > 0 && (
+                <tr><td><Badge kind="gray">价格</Badge></td>
+                  <td>{t.bad_price} 条零价出货记录已排除出均价统计</td>
+                  <td className="num"><Link href="/data-health" className="btn sm">查看</Link></td></tr>
+              )}
+              {t.stale_quotes > 0 && (
+                <tr><td><Badge kind="amber">跟进</Badge></td>
+                  <td>{t.stale_quotes} 张报价单超过 3 天没有结果</td>
+                  <td className="num"><Link href="/inquiries" className="btn sm">去跟进</Link></td></tr>
+              )}
+              {noTodo && (
+                <tr><td colSpan={3}><div className="empty" style={{ padding: 28 }}>暂时没有待办</div></td></tr>
+              )}
+            </tbody></table></div>
+          </div>
+        </Card>
+
+        <Card>
+          <CardH title="最近询价" right={<Link href="/inquiries" className="btn sm ghost">全部 →</Link>} />
+          <div className="card-b flush">
+            {d.recentInquiries?.length ? (
+              <div className="table-wrap"><table><tbody>
+                {d.recentInquiries.map((q: any) => {
+                  const o = OUTCOME_LABEL[q.outcome] || OUTCOME_LABEL.draft;
+                  return (
+                    <tr key={q.id}>
+                      <td className="mono">{q.quote_no || `#${q.id}`}</td>
+                      <td>{q.customer || <span className="muted">未指定客户</span>}</td>
+                      <td className="num">{q.line_count} 项</td>
+                      <td className="num mono">{money(q.total_amount)}</td>
+                      <td><Badge kind={o.kind}>{o.text}</Badge></td>
+                    </tr>
+                  );
+                })}
+              </tbody></table></div>
+            ) : <Empty icon="☰" text="还没有询价记录" hint="去 AI 询价助手处理第一单" />}
+          </div>
+        </Card>
+      </div>
+    </>
   );
-}
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: .6, margin: '14px 0 8px', paddingBottom: 4, borderBottom: '1px solid var(--border)' }}>{children}</div>;
 }
