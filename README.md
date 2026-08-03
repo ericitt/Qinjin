@@ -31,10 +31,17 @@
 
 ```bash
 npm run dev          # 本地开发
-npm run build        # 构建（推 main 后 Vercel 自动执行）
+npm run check        # 快速结构检查（秒级，不能替代 build）
+npm run build        # 构建 —— 提交前必须跑通，Vercel 用的就是这个
 npm run migrate      # 只跑 sql/migrations/（已有库升级用）
 npm run seed         # 全新库：建表 + 迁移 + 导入历史数据 + 清洗
 npm run typecheck    # 类型检查
+```
+
+**提交习惯**：用 `&&` 串起来，build 不过就不会提交，避免推上去一个构建失败的版本：
+
+```bash
+npm run build && git add -A && git commit -m "说明" && git push
 ```
 
 ## 目录结构
