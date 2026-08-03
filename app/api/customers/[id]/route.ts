@@ -18,8 +18,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
                 coalesce(s.parts,0)::int AS part_kinds
            FROM customers c
            LEFT JOIN LATERAL (
-             SELECT count(*) AS n, sum(quantity*unit_price) AS amount,
-                    sum(quantity*coalesce(unit_cost,0)) AS cost,
+             -- 毛利只能在「有成本」的行上算。把缺失成本当 0 会让毛利虚高得离谱：
+             -- 某客户 15 行里只有 6 行有成本，当 0 算出来 59.8%，实际 13.5%。
+             SELECT count(*) AS n,
+                    sum(quantity*unit_price) AS amount,
+                    count(unit_cost) AS n_with_cost,
+                    sum(quantity*unit_price) FILTER (WHERE unit_cost IS NOT NULL) AS amount_costed,
+                    sum(quantity*unit_cost)  FILTER (WHERE unit_cost IS NOT NULL) AS cost,
                     min(ship_date) AS first_date, max(ship_date) AS last_date,
                     count(DISTINCT part_id) AS parts
                FROM shipments WHERE customer_id = c.id AND price_flag = 'ok'
@@ -57,7 +62,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({
       customer: {
         ...c,
-        margin_pct: c.amount > 0 ? ((c.amount - c.cost) / c.amount) * 100 : null,
+        // 只对有成本的部分算毛利，同时把覆盖率给出去，让人知道这个数字有多可信
+        margin_pct: c.amount_costed > 0 ? ((c.amount_costed - c.cost) / c.amount_costed) * 100 : null,
+        cost_coverage: c.n > 0 ? (c.n_with_cost / c.n) * 100 : null,
       },
       topParts: topParts.rows.map((r: any) => ({
         ...r,

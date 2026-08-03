@@ -16,16 +16,20 @@ export async function GET(req: NextRequest) {
               coalesce(s.amount, 0)::float   AS amount,
               s.last_date::text              AS last_date,
               s.margin_pct::float            AS margin_pct,
+              s.cost_coverage::float         AS cost_coverage,
               coalesce(b.quote_count, 0)::int AS quote_count,
               coalesce(b.won_count, 0)::int   AS won_count
          FROM customers c
          LEFT JOIN LATERAL (
+           -- 毛利只在有成本的行上算，缺成本的行不能当成本为 0（否则毛利虚高数倍）
            SELECT count(DISTINCT sh.ship_date)::int AS order_count,
                   sum(sh.quantity * sh.unit_price)  AS amount,
                   max(sh.ship_date)                 AS last_date,
-                  CASE WHEN sum(sh.quantity * sh.unit_price) > 0
-                       THEN (sum(sh.quantity * sh.unit_price) - sum(sh.quantity * coalesce(sh.unit_cost, 0)))
-                            / nullif(sum(sh.quantity * sh.unit_price), 0) * 100 END AS margin_pct
+                  (sum(sh.quantity * sh.unit_price) FILTER (WHERE sh.unit_cost IS NOT NULL)
+                   - sum(sh.quantity * sh.unit_cost) FILTER (WHERE sh.unit_cost IS NOT NULL))
+                  / nullif(sum(sh.quantity * sh.unit_price) FILTER (WHERE sh.unit_cost IS NOT NULL), 0)
+                  * 100 AS margin_pct,
+                  100.0 * count(sh.unit_cost) / nullif(count(*), 0) AS cost_coverage
              FROM shipments sh
             WHERE sh.customer_id = c.id AND sh.price_flag = 'ok'
          ) s ON true

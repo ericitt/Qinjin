@@ -51,7 +51,11 @@ export default function CustomersPage() {
                   <dl className="kv" style={{ fontSize: 12.5 }}>
                     <dt>联系人</dt><dd>{c.contact_name || '—'}{c.phone ? ` · ${c.phone}` : ''}</dd>
                     <dt>累计出货</dt><dd>{int(c.order_count)} 次 · {money(c.amount)}</dd>
-                    <dt>平均毛利</dt><dd className={c.margin_pct != null && c.margin_pct < 20 ? 'down' : 'up'}>{pct(c.margin_pct)}</dd>
+                    <dt>平均毛利</dt><dd className={c.margin_pct != null && c.margin_pct < 20 ? 'down' : 'up'}>
+                      {pct(c.margin_pct)}
+                      {c.cost_coverage != null && c.cost_coverage < 95 && (
+                        <span className="muted small"> （仅 {pct(c.cost_coverage)} 有成本）</span>
+                      )}</dd>
                     <dt>询价 / 成交</dt><dd>{int(c.quote_count)} / {int(c.won_count)}</dd>
                     <dt>结算方式</dt><dd>{c.payment_terms || '—'}</dd>
                     <dt>最近成交</dt><dd>{shortDate(c.last_date)}</dd>
@@ -103,6 +107,15 @@ function CustomerDetail({ id, onClose }: { id: number; onClose: () => void }) {
             首次成交 {shortDate(c.first_date)} · 最近成交 {shortDate(c.last_date)}
             {c.notes && <> · 业务员 {c.notes}</>}
           </div>
+
+          {c.cost_coverage != null && c.cost_coverage < 95 && (
+            <Note kind="warn">
+              <b>毛利仅基于 {pct(c.cost_coverage)} 的出货行计算。</b>
+              这个客户 {int(c.ship_rows)} 笔出货里只有 {int(c.n_with_cost)} 笔记录了成本，
+              其余的没有成本就不参与毛利计算 —— 把缺失成本当成 0 会让毛利虚高好几倍。
+              导入更完整的采购/成本数据后这个数字才准。
+            </Note>
+          )}
 
           {d.monthly?.length > 1 && (
             <Card style={{ marginBottom: 14 }}>

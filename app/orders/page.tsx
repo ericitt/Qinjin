@@ -94,6 +94,8 @@ function Orders() {
             <Stat label="成交金额" value={money(sm.amount)} />
             <Stat label="成本合计" value={money(sm.cost)} />
             <Stat label="毛利率" value={sm.margin == null ? '—' : pct(sm.margin)}
+              delta={sm.cost_coverage != null && sm.cost_coverage < 95
+                ? `仅 ${pct(sm.cost_coverage)} 的行有成本` : undefined}
               tone={sm.margin != null && sm.margin < 15 ? 'down' : 'up'} />
           </div>
         )}

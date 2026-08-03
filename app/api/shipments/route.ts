@@ -40,7 +40,9 @@ export async function GET(req: NextRequest) {
     const { rows: [sum] } = await pool.query(
       `SELECT count(*)::int AS n,
               sum(s.quantity * s.unit_price)::float AS amount,
-              sum(s.quantity * coalesce(s.unit_cost, 0))::float AS cost
+              count(s.unit_cost)::int AS n_with_cost,
+              sum(s.quantity * s.unit_price) FILTER (WHERE s.unit_cost IS NOT NULL)::float AS amount_costed,
+              sum(s.quantity * s.unit_cost)  FILTER (WHERE s.unit_cost IS NOT NULL)::float AS cost
          FROM shipments s JOIN parts p ON p.id = s.part_id
          LEFT JOIN customers c ON c.id = s.customer_id
         WHERE ${where.join(' AND ')} AND s.price_flag = 'ok'`,
@@ -53,7 +55,9 @@ export async function GET(req: NextRequest) {
       total, page, limit, pages: Math.ceil(total / limit),
       summary: {
         ...sum,
-        margin: sum?.amount > 0 ? ((sum.amount - (sum.cost || 0)) / sum.amount) * 100 : null,
+        // 只在有成本的部分算毛利，并给出成本覆盖率
+        margin: sum?.amount_costed > 0 ? ((sum.amount_costed - sum.cost) / sum.amount_costed) * 100 : null,
+        cost_coverage: sum?.n > 0 ? (sum.n_with_cost / sum.n) * 100 : null,
       },
     });
   } catch (err: any) {

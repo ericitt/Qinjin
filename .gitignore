@@ -4,3 +4,7 @@ node_modules/
 .env.local
 *.log
 .DS_Store
+# 编辑器/挂载卷产生的临时残留（.fuse_hidden* 是文件被替换时留下的副本）
+.fuse_hidden*
+*.swp
+*~
