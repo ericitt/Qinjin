@@ -153,22 +153,33 @@ for (const f of files) {
 
 /* ---------- 4. 事件处理器直接传带参函数 ---------- */
 console.log('4) 事件处理器参数');
+// 记录形参个数，以及第一个形参「看起来是不是事件对象」。
+// 因为 onSubmit={submit} 这种、handler 本来就要收 event 的写法是正确的，
+// 只有第一个形参不是 event（比如我曾经写的 doPreview(kind)）才是 bug。
 const arity = new Map();
+const looksLikeEvent = (p) => {
+  const first = (p.split(',')[0] || '').trim();
+  if (!first) return false;
+  const name = first.split(':')[0].trim().replace(/[?=].*$/, '');
+  return /^(e|ev|evt|event)$/i.test(name) || /Event\b/.test(first);
+};
 for (const f of files) {
   const s = fs.readFileSync(f, 'utf8');
-  for (const m of s.matchAll(/(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/g))
-    arity.set(f + '::' + m[1], m[2].trim() ? m[2].split(',').length : 0);
-  for (const m of s.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/g))
-    arity.set(f + '::' + m[1], m[2].trim() ? m[2].split(',').length : 0);
+  const add = (name, params) => arity.set(f + '::' + name, {
+    n: params.trim() ? params.split(',').length : 0,
+    evt: looksLikeEvent(params),
+  });
+  for (const m of s.matchAll(/(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/g)) add(m[1], m[2]);
+  for (const m of s.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/g)) add(m[1], m[2]);
 }
 for (const f of files.filter((x) => x.endsWith('.tsx'))) {
   const s = fs.readFileSync(f, 'utf8');
   for (const m of s.matchAll(/\bon([A-Z]\w+)=\{([A-Za-z_$][\w$]*)\}/g)) {
-    let n = arity.get(f + '::' + m[2]);
-    if (n === undefined) for (const [k, v] of arity) if (k.endsWith('::' + m[2])) { n = v; break; }
-    if (n > 0) {
+    let info = arity.get(f + '::' + m[2]);
+    if (!info) for (const [k, v] of arity) if (k.endsWith('::' + m[2])) { info = v; break; }
+    if (info && info.n > 0 && !info.evt) {
       const line = s.slice(0, m.index).split('\n').length;
-      report(`${f}:${line} on${m[1]}={${m[2]}} —— ${m[2]} 有 ${n} 个形参，事件对象会被当成第一个参数传进去`);
+      report(`${f}:${line} on${m[1]}={${m[2]}} —— ${m[2]} 的第一个形参不是事件对象，会被 React 传进事件对象`);
     }
   }
 }

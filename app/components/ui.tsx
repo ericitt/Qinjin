@@ -111,6 +111,11 @@ export async function api<T = any>(url: string, init?: RequestInit): Promise<T> 
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   });
+  // 登录过期时后端返回 401，直接送回登录页，不要让用户对着「请求失败」发懵
+  if (r.status === 401 && typeof window !== 'undefined') {
+    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+    throw new Error('登录已过期');
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j?.error || `请求失败 (${r.status})`);
   return j as T;
