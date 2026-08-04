@@ -1,11 +1,20 @@
 # 局域网自建用的镜像。多阶段构建，最终镜像只有几十 MB。
+#
+# 国内构建注意：npm 官方源在国内很慢，默认改用淘宝镜像。
+# 如果在墙外构建，可以用 --build-arg NPM_REGISTRY=https://registry.npmjs.org 切回去。
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
 FROM node:20-alpine AS deps
+ARG NPM_REGISTRY
 WORKDIR /app
+RUN npm config set registry "$NPM_REGISTRY"
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && cp -R node_modules /tmp/prod_modules && npm ci
+RUN npm ci
 
 FROM node:20-alpine AS builder
+ARG NPM_REGISTRY
 WORKDIR /app
+RUN npm config set registry "$NPM_REGISTRY"
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # standalone 模式会把用到的依赖一起打包，运行时不需要完整 node_modules

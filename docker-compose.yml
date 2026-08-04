@@ -30,7 +30,11 @@ services:
       retries: 10
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # 国内构建走淘宝源；墙外构建可改成 https://registry.npmjs.org
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: qijin-app
     restart: unless-stopped
     depends_on:
