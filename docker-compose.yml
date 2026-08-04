@@ -7,7 +7,10 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    # 必须和 Supabase 那边的大版本一致（17.x）。
+    # 用 16 的话，从 17 导出的 dump 里有 `SET transaction_timeout`（PG17 才有的参数），
+    # 还原时 PG16 会直接报 unrecognized configuration parameter 然后中断。
+    image: postgres:17-alpine
     container_name: qijin-db
     restart: unless-stopped
     environment:
