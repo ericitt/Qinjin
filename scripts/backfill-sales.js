@@ -20,7 +20,7 @@
 const path = require('path');
 const { Client } = require('pg');
 require('dotenv').config();
-const { readXls, toTable, forwardFill } = require('../lib/xls');
+const { readSpreadsheet, toTable, forwardFill } = require('../lib/xls');
 
 const COMMIT = process.argv.includes('--commit');
 const input = process.argv[2];
@@ -40,27 +40,43 @@ const toDate = (v) => {
   return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : null;
 };
 
-// ERP 导出的列名 → 内部字段
-const COL = { cust: '客户名称', date: '日期', pn: '型号', qty: '订单数量', price: '税价', cost: '单位成本', rep: '业务员' };
+// ERP 导出的列名 → 内部字段。
+// required 为 false 的列缺了也能跑：不同年份的导出表字段不一样，
+// 比如 2023-2024 那份就没有「单位成本」和「业务员」，只能回填客户。
+const COL = {
+  cust: { label: '客户名称', required: true },
+  date: { label: '日期', required: true },
+  pn:   { label: '型号', required: true },
+  qty:  { label: '订单数量', required: true },
+  price:{ label: '税价', required: true },
+  cost: { label: '单位成本', required: false },
+  rep:  { label: '业务员', required: false },
+};
 
 function parseFile(file) {
-  const table = toTable(readXls(file)[0].cells);
-  const header = table[0].map(String);
+  const table = toTable(readSpreadsheet(file)[0].cells);
+  const header = table[0].map((h) => String(h ?? '').trim());
   const at = {};
-  for (const [k, label] of Object.entries(COL)) {
-    at[k] = header.indexOf(label);
-    if (at[k] < 0) throw new Error(`表里找不到列「${label}」，实际列名：${header.join(' | ')}`);
+  const missing = [];
+  for (const [k, def] of Object.entries(COL)) {
+    at[k] = header.indexOf(def.label);
+    if (at[k] < 0) {
+      if (def.required) throw new Error(`表里找不到必需列「${def.label}」，实际列名：${header.join(' | ')}`);
+      missing.push(def.label);
+    }
   }
+  if (missing.length) console.log(`  注意：这份表没有 ${missing.map((m) => '「' + m + '」').join('、')}，对应字段不会回填`);
   const body = table.slice(1).filter((r) => String(r[at.pn] ?? '').trim());
   forwardFill(body, at.cust);           // 分组报表：客户名只在每组第一行
+  const col = (r, k) => (at[k] >= 0 ? r[at[k]] : null);
   return body.map((r) => ({
-    cust: String(r[at.cust] ?? '').trim(),
-    date: toDate(r[at.date]),
-    pn: normPn(r[at.pn]),
-    qty: num(r[at.qty]),
-    price: num(r[at.price]),
-    cost: num(r[at.cost]),
-    rep: String(r[at.rep] ?? '').trim(),
+    cust: String(col(r, 'cust') ?? '').trim(),
+    date: toDate(col(r, 'date')),
+    pn: normPn(col(r, 'pn')),
+    qty: num(col(r, 'qty')),
+    price: num(col(r, 'price')),
+    cost: num(col(r, 'cost')),
+    rep: String(col(r, 'rep') ?? '').trim(),
   })).filter((r) => r.date && r.pn);
 }
 
