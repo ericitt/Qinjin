@@ -27,15 +27,19 @@ export async function GET(req: NextRequest, { params }: { params: { pn: string }
         `SELECT alias, source FROM part_aliases WHERE part_id = $1 ORDER BY alias`,
         [partId]
       ),
-      // 按月成交均价走势
+      // 按月成交均价走势。
+      // 原来限制在近 24 个月内 —— 但你们大部分成交发生在 2023~2025 年，
+      // 卡这个窗口的结果是绝大多数型号的走势图都是空的，看着像功能坏了。
+      // 改成取全部历史里最近的 36 个月份（有成交的月份才算一格）。
       pool.query(
-        `SELECT to_char(date_trunc('month', ship_date), 'YYYY-MM') AS ym,
-                avg(unit_price)::float AS avg_price,
-                sum(quantity)::float AS qty
-           FROM shipments
-          WHERE part_id = $1 AND price_flag = 'ok'
-            AND ship_date >= (current_date - interval '24 months')
-          GROUP BY 1 ORDER BY 1`,
+        `SELECT ym, avg_price, qty FROM (
+           SELECT to_char(date_trunc('month', ship_date), 'YYYY-MM') AS ym,
+                  avg(unit_price)::float AS avg_price,
+                  sum(quantity)::float AS qty
+             FROM shipments
+            WHERE part_id = $1 AND price_flag = 'ok'
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 36
+         ) t ORDER BY ym`,
         [partId]
       ),
       // 各来源价格记录
