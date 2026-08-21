@@ -111,7 +111,17 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 | 触发器 | 每天，凌晨 2:30 |
 | 操作 | 启动程序 |
 | 程序 | `powershell.exe` |
-| 参数 | `-Command "$env:PGPASSWORD='你的数据库密码'; pg_dump -U qijin -d qijin -f C:\qijin\backups\qijin-$(Get-Date -Format yyyyMMdd).sql"` |
+| 参数 | `-ExecutionPolicy Bypass -File C:\qijin\scripts\backup-windows.ps1` |
+| 起始于 | `C:\qijin` |
+
+（把 `C:\qijin` 换成你实际的项目目录。脚本自己从 `.env` 读密码，
+所以不用把密码写进任务里；备份保留 30 天，过期的自动删。）
+
+先手动跑一次确认没问题：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\backup-windows.ps1
+```
 
 **定期把 `C:\qijin\backups\` 复制到 NAS 或网盘** —— 备份和数据库在同一块硬盘上，那块盘坏了两个一起没。
 
@@ -139,13 +149,15 @@ Eric 给你新版本时：
 
 ```powershell
 cd C:\qijin
+git pull                          # 没装 git 就用 Eric 给的 zip 覆盖，但保留 .env
 npm install --no-audit --no-fund
+npm run migrate                   # 执行新增的数据库变更，可反复运行
 npm run build
 schtasks /End /TN "勤进物料库-应用"
 schtasks /Run /TN "勤进物料库-应用"
 ```
 
-数据不会丢。
+数据不会丢。`npm run migrate` 每次更新后都跑一下，已经执行过的会自动跳过。
 
 ---
 
