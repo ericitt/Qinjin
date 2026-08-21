@@ -184,6 +184,41 @@ for (const f of files.filter((x) => x.endsWith('.tsx'))) {
   }
 }
 
+/* ------------------------------------------------------------------
+ * 5) API 路由的静态缓存陷阱
+ *
+ * Next.js App Router 会把「不读 request、也不用动态 API」的 GET 路由
+ * 当成静态内容：构建时执行一次，之后永远返回那次的结果。
+ * 对查数据库的接口来说这是灾难 —— 页面看着正常，数据永远停在构建那一刻。
+ * 而且不报错，只能靠对比数据库才发现。这里静态兜住。
+ * ------------------------------------------------------------------ */
+console.log('5) API 路由是否会被静态缓存');
+const routeFiles = [];
+(function walk(d) {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walk(p);
+    else if (e.name === 'route.ts' || e.name === 'route.js') routeFiles.push(p);
+  }
+})(path.join('app', 'api'));
+
+for (const f of routeFiles) {
+  // 必须先去掉注释再匹配。第一版没去，结果本文件说明里那句
+  //「也不用 cookies()/headers()」自己把检查骗过去了 —— 检查器写完要自测。
+  const s = fs.readFileSync(f, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const m = s.match(/export\s+async\s+function\s+GET\s*\(([^)]*)\)/);
+  if (!m) continue;                                   // 没有 GET，不受影响
+  const usesRequest = m[1].trim().length > 0;         // 形参里拿了 request → 自动动态
+  const declared = /export\s+const\s+(dynamic|revalidate)\s*=/.test(s);
+  const usesDynamicApi = /from\s+['"]next\/headers['"]/.test(s);
+  if (!usesRequest && !declared && !usesDynamicApi) {
+    report(`${f} 的 GET 不读 request，会被 Next 在构建时固化。`
+      + ` 请加一行：export const dynamic = 'force-dynamic';`);
+  }
+}
+
 console.log();
 if (problems) {
   console.log(`发现 ${problems} 个问题`);
