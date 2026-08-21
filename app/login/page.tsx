@@ -59,7 +59,7 @@ function Login() {
             </button>
           </form>
           <div className="muted small" style={{ marginTop: 14, lineHeight: 1.6 }}>
-            登录状态保持 14 天。密码由管理员在 Vercel 环境变量 <span className="mono">ACCESS_PASSWORD</span> 中设置。
+            登录状态保持 14 天。密码在服务器上的 <span className="mono">.env</span> 文件里，改 <span className="mono">ACCESS_PASSWORD</span> 后重启服务生效。
           </div>
         </div>
       </div>

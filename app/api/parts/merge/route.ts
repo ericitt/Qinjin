@@ -113,7 +113,7 @@ export async function DELETE(req: NextRequest) {
     if (!rows.length) return NextResponse.json({ error: '批次不存在或已撤销' }, { status: 404 });
     if (rows.some((r: any) => !r.moved_ids)) {
       return NextResponse.json(
-        { error: '该批次未记录搬迁明细（002 首批清洗），无法精确撤销，请使用 Supabase 时间点恢复' },
+        { error: '该批次未记录搬迁明细（002 首批清洗），无法精确撤销，只能用每日备份的 .sql 文件恢复' },
         { status: 409 }
       );
     }

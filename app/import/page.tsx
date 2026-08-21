@@ -111,7 +111,11 @@ export default function ImportPage() {
         method: 'POST', body: JSON.stringify({ kind, text: t }),
       });
       setPreview(p); setMapping(p.suggestedMapping || {});
-      const sure = p.okCount > 0 && p.rejectCount === 0
+      // 允许少量拒绝行：ERP 导出的表几乎都带「合计」行、零单价行这类杂质，
+      // 要求零拒绝的话一键导入基本永远不会触发。超过 5% 就说明这份表有系统性问题，
+      // 那时候停下来让人看一眼才是对的。
+      const badRate = p.rowTotal ? p.rejectCount / p.rowTotal : 1;
+      const sure = p.okCount > 0 && badRate <= 0.05
         && !(p.missingRequired?.length) && !p.kindHint
         && (kind !== 'auto' || p.detected?.confident);
       if (!sure) return;   // 停在预览，等人确认
@@ -242,7 +246,7 @@ export default function ImportPage() {
                     {done.auto && <><b>已自动识别为「{done.label}」并入库。</b><br /></>}
                     <b>批次 {done.batchNo}</b> 已写入 {int(done.written)} 条，
                     拒绝 {int(done.rejected)} 条（共 {int(done.total)} 行）。
-                    {done.skippedDup > 0 && <>其中 {int(done.skippedDup)} 条因为已经存在被跳过。</>}
+                    {done.skippedDup > 0 && <>另有 {int(done.skippedDup)} 条跳过（已存在，或库里的记录比这份更新）。</>}
                   </Note>
                   <div className="row" style={{ marginTop: 12 }}>
                     <button className="btn danger" onClick={() => rollback(done.batchNo)} disabled={busy}>

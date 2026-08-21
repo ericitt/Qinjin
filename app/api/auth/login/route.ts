@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   fails.delete(ip);
 
   // secure=true 的 cookie 浏览器只在 HTTPS 下回传。
-  // 云端（Vercel）是 HTTPS 没问题，但内网自建是 http://192.168.x.x:3000 明文访问，
+  // 内网自建是 http://192.168.x.x:3000 明文访问，
   // 如果无条件设 secure，浏览器会收下 cookie 却拒绝回传 —— 表现为
   // 「密码输对了、却一直卡在登录页进不去」。所以这里按实际协议判断。
   const proto = req.headers.get('x-forwarded-proto');

@@ -1,12 +1,8 @@
 import { Pool } from 'pg';
 
-// 两种部署环境的连接方式不一样：
+// 本系统只跑内网自建（本机 PostgreSQL），不再连任何云数据库。
 //
-// 1. 云端（Supabase + Vercel）：必须走 "Connection pooling"（Transaction 模式，端口 6543）连接串，
-//    不能用 Direct connection（5432）—— Vercel 的 serverless function 按请求起停，
-//    并发高时直连很容易把连接数配额打满。Supabase 强制要求 SSL。
-//
-// 2. 内网自建（本机 PostgreSQL）：本地库默认没开 SSL。
+// SSL 的坑：本地库默认没开 SSL。
 //    如果这里无条件带上 ssl 选项，连接会直接失败（表现为所有接口 500），
 //    数据库明明是好的、.env 也对，但页面一条数据都没有 —— 排查起来很费劲。
 //    所以下面按主机名判断：localhost / 127.0.0.1 / 内网地址一律不用 SSL。

@@ -1,6 +1,7 @@
 # 勤进科技 · 物料库
 
-内部 Web 应用，2-3 人使用。**技术栈**：Next.js（Vercel）+ Supabase（Postgres）+ Claude API。
+内部 Web 应用，2-3 人使用，**完全跑在公司内网**，不依赖任何云服务。
+**技术栈**：Next.js + 本机 PostgreSQL 17 +（可选）DeepSeek API。
 
 ## 页面
 
@@ -32,7 +33,7 @@
 ```bash
 npm run dev          # 本地开发
 npm run check        # 快速结构检查（秒级，不能替代 build）
-npm run build        # 构建 —— 提交前必须跑通，Vercel 用的就是这个
+npm run build        # 构建 —— 提交前必须跑通，内网机器上也是跑这个
 npm run migrate      # 只跑 sql/migrations/（已有库升级用）
 npm run seed         # 全新库：建表 + 迁移 + 导入历史数据 + 清洗
 npm run typecheck    # 类型检查
@@ -53,7 +54,7 @@ app/api/            API routes
 lib/matching.ts     批量匹配（整批 5 次查询，与行数无关）
 lib/import.ts       导入解析、字段映射、校验
 lib/scoring.ts      供应商评分
-lib/db.ts           连接池（Supabase Transaction pooler）
+lib/db.ts           连接池（本机 PostgreSQL，内网地址自动不走 SSL）
 sql/init.sql        初始表结构
 sql/migrations/     增量迁移，按文件名顺序执行
 sql/seed.sql        历史数据
@@ -84,7 +85,7 @@ sql/seed.sql        历史数据
 
 ## 访问密码
 
-在 Vercel 的环境变量里设置 `ACCESS_PASSWORD` 即可开启门禁：
+在服务器的 `.env` 里设置 `ACCESS_PASSWORD` 即可开启门禁（改完重启服务）：
 
 - **留空 = 不拦**。故意这么设计的，免得环境变量没配好把所有人锁在外面。
 - 配上之后所有页面跳 `/login`，所有 `/api/*` 返回 401。
@@ -99,5 +100,5 @@ sql/seed.sql        历史数据
 
 - `supplier_parts` 需要导入真实供应商报价，否则「找哪家买最便宜」无法回答
 - 历史 `shipments` 的客户归属需要带客户列重新导入一次
-- 大陆访问：`*.vercel.app` 被墙，见 `DEPLOY-CHINA.md`
+- 部署：见 `DEPLOY-WINDOWS.md`（内网自建，从零装好）
 - 无自动化测试、无错误监控

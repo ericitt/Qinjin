@@ -33,6 +33,6 @@ BEGIN
 END $$;
 
 -- 说明：由于 shipments/quotes 搬迁后没有留下"原属哪条记录"的标记，
--- 精确回滚需要依赖 Supabase 的时间点恢复（PITR）。
+-- 精确回滚只能靠每日备份的 .sql 文件恢复。
 -- 若要让未来的合并可以精确回滚，应在搬迁时记录被搬行的 id 列表 ——
 -- 见 lib/merge.ts 里 mergeParts() 的实现，它会把 id 列表写进 part_merge_log.moved_ids。
