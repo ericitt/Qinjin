@@ -121,6 +121,8 @@ export default function BomPage() {
 
   return (
     <>
+      {/* AI_DISABLED_NOTE：没配密钥时导航里已经隐藏本页，
+          但直接输网址还是能进来，这里给个明确提示，别让人对着报错猜 */}
       <Topbar title="AI 询价助手" sub="粘贴客户询价单，自动解析并匹配报价" />
       <div className="page">
         <div className="grid g2" style={{ alignItems: 'start' }}>
