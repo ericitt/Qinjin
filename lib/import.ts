@@ -1,6 +1,8 @@
 import pool from './db';
 import { normPn } from './matching';
 
+import type { ColKind, ColProfile } from './profile';
+
 /* =====================================================================
    数据导入
    这是之前整个系统最大的缺口：上线后没有任何入口能新增出货记录、
@@ -145,9 +147,9 @@ const ALIASES: Record<string, string[]> = {
   quoted_at: ['报价日期', '报价时间', 'quote_date', '日期'],
   is_agent: ['是否代理商', '代理商', '是否代理'],
   valid_until: ['有效期', '有效期至', '报价有效期'],
-  spec: ['规格', '规格描述', '描述', 'spec', '说明'],
+  spec: ['规格', '规格描述', '描述', '型号描述', '物料描述', '品名', 'spec', 'description', '说明'],
   cat: ['分类', '类别', '品类', 'category', 'cat'],
-  brand: ['品牌', '厂牌', 'brand', '制造商'],
+  brand: ['品牌', '厂牌', '牌子', '商标', 'brand', '制造商', 'mfr', 'manufacturer'],
   catalog_cost: ['目录成本', '参考成本', '成本'],
   standard_price: ['标准售价', '参考售价', '标准价'],
   stock_qty: ['库存', '现存量', '库存数量', 'stock'],
@@ -163,14 +165,141 @@ const ALIASES: Record<string, string[]> = {
   level: ['分级', '等级', '客户等级', 'level'],
 };
 
-export function suggestMapping(kind: ImportKind, headers: string[]): Record<string, string> {
+/**
+ * 每个字段期望列里装什么。表头看走眼时，靠这个把关。
+ * want 命中加分，avoid 命中重罚 —— 「客户」这个字段绝不可能落在一列纯数字上。
+ */
+const FIELD_CONTENT: Record<string, { want: ColKind[]; avoid?: ColKind[] }> = {
+  ship_date: { want: ['date'], avoid: ['company', 'pn', 'money'] },
+  buy_date: { want: ['date'], avoid: ['company', 'pn', 'money'] },
+  quoted_at: { want: ['date'], avoid: ['company', 'pn', 'money'] },
+  valid_until: { want: ['date'], avoid: ['company', 'pn', 'money'] },
+  quantity: { want: ['int'], avoid: ['date', 'company', 'pn', 'currency'] },
+  stock_qty: { want: ['int', 'money'], avoid: ['date', 'company', 'pn'] },
+  moq: { want: ['int', 'pkg'], avoid: ['date', 'company'] },
+  lead_time_days: { want: ['int'], avoid: ['date', 'company', 'pn'] },
+  unit_price: { want: ['money'], avoid: ['date', 'company', 'pn', 'currency'] },
+  price: { want: ['money'], avoid: ['date', 'company', 'pn', 'currency'] },
+  unit_cost: { want: ['money'], avoid: ['date', 'company', 'pn', 'currency'] },
+  catalog_cost: { want: ['money'], avoid: ['date', 'company', 'pn'] },
+  standard_price: { want: ['money'], avoid: ['date', 'company', 'pn'] },
+  pn: { want: ['pn'], avoid: ['company', 'date', 'money', 'int', 'currency', 'bool'] },
+  customer: { want: ['company'], avoid: ['pn', 'money', 'int', 'date', 'currency'] },
+  supplier: { want: ['company'], avoid: ['pn', 'money', 'int', 'date', 'currency'] },
+  company_name: { want: ['company', 'text'], avoid: ['money', 'int', 'date'] },
+  name: { want: ['company', 'text'], avoid: ['money', 'int', 'date'] },
+  short_name: { want: ['company', 'text', 'brand'], avoid: ['money', 'date'] },
+  brand: { want: ['brand', 'company', 'text'], avoid: ['money', 'date', 'int'] },
+  pkg: { want: ['pkg', 'brand', 'text'], avoid: ['date', 'company'] },
+  currency: { want: ['currency'], avoid: ['date', 'money', 'int', 'pn', 'company'] },
+  is_agent: { want: ['bool'], avoid: ['date', 'money', 'pn', 'company'] },
+  phone: { want: ['int', 'text'], avoid: ['date', 'money', 'company'] },
+  spec: { want: ['text', 'pn'], avoid: ['date', 'money', 'currency'] },
+  notes: { want: ['text', 'company'], avoid: ['date', 'currency'] },
+  cat: { want: ['brand', 'text'], avoid: ['date', 'money', 'pn'] },
+  region: { want: ['brand', 'text', 'company'], avoid: ['date', 'money', 'int'] },
+  contact_name: { want: ['text', 'brand'], avoid: ['date', 'money', 'int', 'pn'] },
+  grade: { want: ['brand', 'bool', 'text'], avoid: ['date', 'money', 'pn'] },
+  level: { want: ['brand', 'bool', 'text'], avoid: ['date', 'money', 'pn'] },
+  payment_terms: { want: ['text', 'brand'], avoid: ['date', 'money', 'pn'] },
+};
+
+const normHeader = (s: string) => String(s ?? '').toLowerCase().replace(/[\s_\-()（）:：\[\]]/g, '');
+
+/** 编辑距离 ≤1 的容错，专治「客户名称」被打成「客户名秤」这种 */
+function nearlyEqual(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1 || Math.min(a.length, b.length) < 3) return false;
+  let i = 0, j = 0, diff = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++diff > 1) return false;
+    if (a.length > b.length) i++;
+    else if (a.length < b.length) j++;
+    else { i++; j++; }
+  }
+  return diff + (a.length - i) + (b.length - j) <= 1;
+}
+
+/** 表头文字层面的匹配度：完全一致 > 包含 > 近似 */
+function headerScore(fieldKey: string, label: string, header: string): number {
+  const h = normHeader(header);
+  if (!h) return 0;
+  const cands = [fieldKey, label, ...(ALIASES[fieldKey] || [])].map(normHeader).filter(Boolean);
+  if (cands.includes(h)) return 10;
+  for (const c of cands) {
+    if (c.length >= 2 && h.includes(c)) return 6;
+    if (c.length >= 3 && c.includes(h) && h.length >= 2) return 4;
+    if (nearlyEqual(h, c)) return 5;
+  }
+  return 0;
+}
+
+/**
+ * 字段映射：表头 + 列内容两票并行，再用「指派」把结果定下来。
+ *
+ * 为什么要指派而不是各挑各的：一张表里「型号」和「型号描述」都能被
+ * 「型号」这个别名匹配上。各挑各的时候两个字段会抢同一列，或者按定义顺序
+ * 先到先得地抢错。改成先给所有 (字段, 列) 组合打分、再从高到低贪心占位，
+ * 每列只能被一个字段占用 —— 型号拿走完全一致的那列，型号描述自然落到剩下那列。
+ */
+export function suggestMapping(
+  kind: ImportKind, headers: string[], profiles?: ColProfile[]
+): Record<string, string> {
+  const defs = FIELD_DEFS[kind];
+  const pf = profiles && profiles.length === headers.length ? profiles : null;
+
+  // 这张表的表头「有多大程度能看懂」。
+  // 表头基本都认识时，某个字段配不上就是真的没有这一列 —— 这时候还去靠内容硬凑，
+  // 只会把「仓库」认成「供应商」。反过来表头全是「列1 列2」时，内容才是唯一线索。
+  const recognizable = headers.filter(
+    (h) => String(h ?? '').trim() && defs.some((f) => headerScore(f.key, f.label, h) > 0)
+  ).length;
+  const headerQuality = headers.length ? recognizable / headers.length : 0;
+  const allowContentOnly = headerQuality < 0.2;
+
+  type Cand = { field: string; header: string; hs: number; score: number };
+  const cands: Cand[] = [];
+  for (const f of defs) {
+    const want = FIELD_CONTENT[f.key];
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i];
+      if (!String(h ?? '').trim()) continue;
+      const hs = headerScore(f.key, f.label, h);
+      let score = hs;
+      const col = pf ? pf[i] : null;
+      if (col && want) {
+        if (want.want.includes(col.kind)) score += 5;
+        else if (want.avoid?.includes(col.kind)) score -= 8;
+        if (col.kind === 'empty') score -= 4;
+        // 同名的两列里优先选填得满的那列（收货数量常年是空的，订单数量才是真数据）
+        score += Math.round(col.fill * 3);
+        // 分组稀疏列几乎一定是客户/供应商，别被「填充率低」误伤。
+        // 但得有个下限：填充率 2% 的列是垃圾列，不是分组列。
+        if (col.grouped && col.fill >= 0.05 && (f.key === 'customer' || f.key === 'supplier')) score += 6;
+      }
+      // 必填字段绝不能落在一列空气上。
+      // 库存表里有个从头空到尾的「供应商」列，光看表头会被认成采购记录，
+      // 然后每一行都因为「缺少供应商」被拒 —— 表面上导入失败，实际是识别错了。
+      // 分组列除外：它天生就稀疏。
+      if (f.required && col && col.fill < 0.3 && !(col.grouped && col.fill >= 0.05)) continue;
+      // 表头完全对不上时，只有必填字段、且这列填得够满，才允许纯靠内容认亲，
+      // 否则一张表里的字段会被内容形态胡乱瓜分。
+      if (hs === 0 && !(allowContentOnly && f.required && col && col.fill >= 0.5
+                        && want?.want.includes(col.kind))) continue;
+      if (score <= 0) continue;
+      cands.push({ field: f.key, header: h, hs, score });
+    }
+  }
+
+  // 分数高的先占位；同分时表头匹配得更实的优先
+  cands.sort((a, b) => b.score - a.score || b.hs - a.hs);
   const map: Record<string, string> = {};
-  const norm = (s: string) => s.toLowerCase().replace(/[\s_\-()（）]/g, '');
-  for (const f of FIELD_DEFS[kind]) {
-    const cands = [f.key, f.label, ...(ALIASES[f.key] || [])].map(norm);
-    const hit = headers.find((h) => cands.includes(norm(h)))
-      ?? headers.find((h) => cands.some((c) => norm(h).includes(c) && c.length >= 2));
-    if (hit) map[f.key] = hit;
+  const usedHeader = new Set<string>();
+  for (const c of cands) {
+    if (map[c.field] || usedHeader.has(c.header)) continue;
+    map[c.field] = c.header;
+    usedHeader.add(c.header);
   }
   return map;
 }
@@ -361,12 +490,37 @@ const KIND_RULES: Record<ImportKind, KindRule> = {
   },
 };
 
-export function guessKind(headers: string[]): { kind: ImportKind; score: number }[] {
-  const joined = headers.join(' ');
-  const out: { kind: ImportKind; score: number }[] = [];
+/**
+ * 表的「形状」信号：流水表一定有日期列，档案表（供应商/客户/物料）一定没有。
+ * 这一条比任何表头关键词都硬 —— 关键词能写歪，一整列日期骗不了人。
+ */
+const SHAPE_RULES: Record<ImportKind, { date: number; company: number; pn: number }> = {
+  shipments:       { date: 5, company: 3, pn: 2 },
+  purchases:       { date: 5, company: 3, pn: 2 },
+  supplier_quotes: { date: 2, company: 3, pn: 2 },
+  parts:           { date: -7, company: -3, pn: 3 },
+  suppliers:       { date: -7, company: 3, pn: -6 },
+  customers:       { date: -7, company: 3, pn: -6 },
+};
 
+/**
+ * 判断一张表属于哪一类。
+ * 三层证据叠加：① 必填字段能不能配齐（硬闸门）② 表头关键词 ③ 列内容形状。
+ * 传了 profiles 就多一层内容证据，没传也能跑（只是弱一点）。
+ */
+export function guessKind(
+  headers: string[], profiles?: ColProfile[]
+): { kind: ImportKind; score: number }[] {
+  const joined = headers.join(' ');
+  const pf = profiles && profiles.length === headers.length ? profiles : null;
+  const has = (k: ColKind) => !!pf && pf.some((c) => c.kind === k && c.fill > 0.3);
+  const hasDate = has('date');
+  const hasCompany = has('company') || (!!pf && pf.some((c) => c.kind === 'company' && c.grouped));
+  const hasPn = has('pn');
+
+  const out: { kind: ImportKind; score: number }[] = [];
   for (const k of Object.keys(FIELD_DEFS) as ImportKind[]) {
-    const map = suggestMapping(k, headers);
+    const map = suggestMapping(k, headers, pf ?? undefined);
     const req = FIELD_DEFS[k].filter((f) => f.required);
     const hitReq = req.filter((f) => map[f.key]).length;
 
@@ -380,6 +534,12 @@ export function guessKind(headers: string[]): { kind: ImportKind; score: number 
     }
     for (const [re, w] of rule.words) {
       if (re.test(joined)) score += w;
+    }
+    if (pf) {
+      const sh = SHAPE_RULES[k];
+      if (hasDate) score += sh.date;
+      if (hasCompany) score += sh.company;
+      if (hasPn) score += sh.pn;
     }
     out.push({ kind: k, score });
   }

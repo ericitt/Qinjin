@@ -15,6 +15,12 @@ const KINDS = [
   { k: 'customers', t: '客户档案', d: '全称、简称、联系人、分级、结算方式', why: '建立客户实体' },
 ];
 
+// 列内容画像的中文标签 —— 让人一眼看出「这一列被系统认成了什么」
+const COL_KIND: Record<string, string> = {
+  date: '日期', int: '整数', money: '金额', pn: '型号', company: '公司名',
+  pkg: '封装', currency: '币种', bool: '是否', brand: '短文本', text: '文本', empty: '全空',
+};
+
 const SAMPLE: Record<string, string> = {
   purchases: `供应商号,日期,货币,牌子,型号,单价,订单数量,封装
 阿里芯城,2025-06-19,RMB,Chipanalog(川土微),CA-IS1306M25G,2.079646,2000,1K
@@ -263,7 +269,7 @@ export default function ImportPage() {
                     sub={`${preview.detected?.label || ''} · ${fileName || '粘贴内容'} · ${int(preview.rowTotal)} 行`} />
                   <div className="card-b flush">
                     <div className="table-wrap"><table>
-                      <thead><tr><th>目标字段</th><th>来源列</th><th>示例值</th></tr></thead>
+                      <thead><tr><th>目标字段</th><th>来源列</th><th>列识别</th><th>示例值</th></tr></thead>
                       <tbody>
                         {preview.fields.map((f: any) => {
                           const col = mapping[f.key];
@@ -279,6 +285,19 @@ export default function ImportPage() {
                                   {preview.headers.map((h: string) => <option key={h}>{h}</option>)}
                                 </select>
                               </td>
+                              <td>
+                                {(() => {
+                                  const pr = preview.profiles?.find((x: any) => x.header === col);
+                                  if (!pr) return <span className="muted small">—</span>;
+                                  return (
+                                    <span className="muted small">
+                                      {COL_KIND[pr.kind] || pr.kind}
+                                      {pr.grouped && ' · 分组'}
+                                      {pr.fill < 100 && ` · ${pr.fill}%有值`}
+                                    </span>
+                                  );
+                                })()}
+                              </td>
                               <td className="mono muted small">{sample ?? '—'}</td>
                             </tr>
                           );
@@ -293,11 +312,18 @@ export default function ImportPage() {
                   <div className="card-b">
                     {preview.detected && (
                       <Note kind={preview.detected.confident ? 'new' : 'warn'}>
-                        {preview.detected.confident
-                          ? <>已识别为<b>「{preview.detected.label}」</b>，字段也已自动对好。</>
-                          : <>看起来像<b>「{preview.detected.label}」</b>，但和
-                              「{preview.detected.candidates?.[1]?.label}」比较接近，没敢直接入库，
-                              请核对下面的字段映射后再点确认。</>}
+                        {preview.detected.source === 'learned'
+                          ? <>这类表以前导过，<b>直接沿用上次的映射</b>
+                              （「{preview.detected.label}」
+                              {preview.detected.learnedCorrected ? '，人工校正过' : ''}
+                              ，已命中 {preview.detected.learnedHits} 次
+                              {preview.detected.learnedSimilarity < 100
+                                ? `，表头相似度 ${preview.detected.learnedSimilarity}%` : ''}）。</>
+                          : preview.detected.confident
+                            ? <>已识别为<b>「{preview.detected.label}」</b>，字段也已自动对好。</>
+                            : <>看起来像<b>「{preview.detected.label}」</b>，但和
+                                「{preview.detected.candidates?.[1]?.label}」比较接近，没敢直接入库，
+                                请核对下面的字段映射后再点确认。改对之后系统会记住，下次同类表就不问了。</>}
                         {!preview.detected.confident && (
                           <div className="row" style={{ marginTop: 8 }}>
                             {preview.detected.candidates?.slice(1, 3).map((c: any) => (

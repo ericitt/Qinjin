@@ -8,3 +8,4 @@ node_modules/
 .fuse_hidden*
 *.swp
 *~
+tsconfig.tsbuildinfo
