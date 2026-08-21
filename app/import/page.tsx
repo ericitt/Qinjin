@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Topbar from '../components/Topbar';
 import {
   api, useAsync, Card, CardH, Badge, Empty, Note, Spinner,
@@ -55,6 +55,15 @@ export default function ImportPage() {
   // 否则文件一拖进去就「好了」，出问题根本不知道是哪一步歪的
   const [steps, setSteps] = useState<{ t: string; s: 'run' | 'ok' | 'fail'; d?: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  // 结果出来后自动滚过去。页面很长，不滚的话「入库完成」在屏幕外，
+  // 看起来就像什么都没发生。
+  useEffect(() => {
+    if (done && resultRef.current) {
+      resultRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [done]);
 
   const begin = (t: string) => setSteps((x) => [...x, { t, s: 'run' }]);
   const finish = (s: 'ok' | 'fail', d?: string) =>
@@ -110,15 +119,20 @@ export default function ImportPage() {
 
   const doCommit = async () => {
     setBusy(true); setErr(null);
+    // 几千行要跑十几秒。不给过程反馈的话，按钮点下去就是一片空白，
+    // 人会以为没反应又点一次 —— 所以这里和一键导入用同一套进度显示。
+    begin('写入数据库');
     try {
       const r: any = await api('/api/import/commit', {
         // 用 preview.kind（自动识别模式下这是识别出来的类型），不要用界面上的 kind
         method: 'POST', body: JSON.stringify({ kind: preview?.kind || kind, text, mapping, fileName }),
       });
+      finish('ok', `批次 ${r.batchNo} · 写入 ${r.written} 条`);
       setDone({ ...r, label: preview?.detected?.label });
-      setSteps((x) => [...x, { t: '写入数据库', s: 'ok', d: `批次 ${r.batchNo} · 写入 ${r.written} 条` }]);
       batches.reload();
-    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    } catch (e: any) {
+      finish('fail', e.message); setErr(e.message);
+    } finally { setBusy(false); }
   };
 
   /**
@@ -310,14 +324,26 @@ export default function ImportPage() {
 
           <div>
             {done ? (
-              <Card style={{ marginBottom: 14 }}>
-                <CardH title="4 · 入库完成" />
+              <div ref={resultRef}>
+              <Card style={{ marginBottom: 14, border: '2px solid var(--green)' }}>
+                <CardH title="✓ 已入库" sub={`批次 ${done.batchNo}`} />
                 <div className="card-b">
+                  <div className="grid g3" style={{ gap: 10, marginBottom: 12 }}>
+                    <div><div className="stat-l">实际写入</div>
+                      <div className="stat up" style={{ fontSize: 22 }}>{int(done.written)}</div></div>
+                    <div><div className="stat-l">跳过（已存在）</div>
+                      <div className="stat" style={{ fontSize: 22 }}>{int(done.skippedDup || 0)}</div></div>
+                    <div><div className="stat-l">拒绝</div>
+                      <div className="stat down" style={{ fontSize: 22 }}>{int(done.rejected)}</div></div>
+                  </div>
                   <Note>
-                    {done.auto && <><b>已自动识别为「{done.label}」并入库。</b><br /></>}
-                    <b>批次 {done.batchNo}</b> 已写入 {int(done.written)} 条，
-                    拒绝 {int(done.rejected)} 条（共 {int(done.total)} 行）。
-                    {done.skippedDup > 0 && <>另有 {int(done.skippedDup)} 条跳过（已存在，或库里的记录比这份更新）。</>}
+                    {done.auto && <><b>自动识别为「{done.label}」。</b> </>}
+                    共 {int(done.total)} 行。数据已经进库了，下面的「导入历史」里能看到这一批，
+                    随时可以整批撤销。
+                    {done.written === 0 && (
+                      <><br /><b>注意：实际写入 0 条。</b>
+                        这份数据之前很可能已经导过了，系统按自然键判定为重复，没有产生新记录。</>
+                    )}
                   </Note>
                   <div className="row" style={{ marginTop: 12 }}>
                     <button className="btn danger" onClick={() => rollback(done.batchNo)} disabled={busy}>
@@ -327,6 +353,7 @@ export default function ImportPage() {
                   </div>
                 </div>
               </Card>
+              </div>
             ) : preview ? (
               <>
                 <Card style={{ marginBottom: 14 }}>

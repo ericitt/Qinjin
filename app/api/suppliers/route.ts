@@ -10,7 +10,14 @@ export async function GET(req: NextRequest) {
   const where: string[] = [];
   const params: any[] = [];
   let i = 1;
-  if (kind) { where.push(`s.kind = $${i}`); params.push(kind); i++; }
+  // 'orderable' = 真正能下单的对象（分销商 / 代理），排除 brand。
+  // brand 那一类不是供应商，是从出货记录里统计出来的品牌名，没有联系方式、没法询价，
+  // 但数量最多，混在一起会把真正能用的供应商淹掉。
+  if (kind === 'orderable') {
+    where.push(`s.kind <> 'brand'`);
+  } else if (kind) {
+    where.push(`s.kind = $${i}`); params.push(kind); i++;
+  }
   if (q) { where.push(`s.company_name ILIKE $${i}`); params.push(`%${q}%`); i++; }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 

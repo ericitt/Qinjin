@@ -7,14 +7,17 @@ import {
 } from '../components/ui';
 
 const KIND_LABEL: Record<string, { text: string; kind: string }> = {
-  verified: { text: '认证', kind: 'green' },
-  brand: { text: '品牌', kind: 'blue' },
-  manual: { text: '手动', kind: 'gray' },
+  verified: { text: '认证分销商', kind: 'green' },
+  manual: { text: '已录入', kind: 'gray' },
+  // brand 不是供应商，是从出货记录里统计出来的品牌名，没联系方式、没法下单
+  brand: { text: '品牌统计', kind: 'blue' },
 };
 
 export default function SuppliersPage() {
   const [q, setQ] = useState('');
-  const [kind, setKind] = useState('');
+  // 默认只看能下单的（分销商/代理）。品牌统计数量最多但没法询价，
+  // 混在一起会把真正有用的供应商淹掉，需要时再单独切过去看。
+  const [kind, setKind] = useState('orderable');
   const [adding, setAdding] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [recalcing, setRecalcing] = useState(false);
@@ -47,11 +50,12 @@ export default function SuppliersPage() {
             <div className="row">
               <input placeholder="搜索供应商" style={{ flex: 1, minWidth: 200 }}
                 value={q} onChange={(e) => setQ(e.target.value)} />
-              <select style={{ width: 160 }} value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="">全部类型</option>
-                <option value="verified">认证联系方式</option>
-                <option value="brand">品牌统计</option>
-                <option value="manual">手动录入</option>
+              <select style={{ width: 190 }} value={kind} onChange={(e) => setKind(e.target.value)}>
+                <option value="orderable">可下单供应商（默认）</option>
+                <option value="verified">仅认证分销商</option>
+                <option value="manual">仅已录入</option>
+                <option value="brand">品牌统计（不能下单）</option>
+                <option value="">全部</option>
               </select>
               <button className="btn" onClick={recalc} disabled={recalcing}>
                 {recalcing ? <><span className="spin" /> 重算中…</> : '重算评分'}
@@ -59,6 +63,13 @@ export default function SuppliersPage() {
               <button className="btn primary" onClick={() => setAdding(true)}>+ 新增供应商</button>
             </div>
             {msg && <Note>{msg}</Note>}
+            {kind === 'orderable' && (
+              <Note>
+                默认只显示<b>能下单的供应商</b>（认证分销商 + 已录入）。
+                「品牌统计」是从出货记录里算出来的品牌名，没有联系方式、不能询价，
+                数量最多但混在一起会把真正能用的供应商淹掉 —— 要看的话在上面切换。
+              </Note>
+            )}
             <Note kind="new">
               <b>评分口径已修正：</b>旧算法把一个品牌下所有物料的价格混在一起算波动率
               （电容和 MCU 放一起），实测波动率普遍大于 1，等于所有品牌的“价格稳定性”都是 0 分，
