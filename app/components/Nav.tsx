@@ -15,6 +15,7 @@ const NAV: Item[] = [
   { href: '/orders', label: '出货明细', icon: '▤' },
   { href: '/customers', label: '客户管理', icon: '◉' },
   { href: '/suppliers', label: '供应商', icon: '⬡' },
+  { href: '/opportunities', label: '商机', icon: '◎', tag: '新' },
   { group: '维护' },
   { href: '/import', label: '数据导入', icon: '↥' },
   { href: '/data-health', label: '数据体检', icon: '⚙' },

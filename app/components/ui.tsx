@@ -108,6 +108,9 @@ export const OUTCOME_LABEL: Record<string, { text: string; kind: string }> = {
 /* ---------- fetch 封装 ---------- */
 export async function api<T = any>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, {
+    // no-store：这些接口全是查实时数据的，任何一层缓存都会让页面显示过期内容。
+    // 之前吃过一次亏 —— 导入历史被 Next 固化在构建时，看着像「数据没进库」。
+    cache: 'no-store',
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   });

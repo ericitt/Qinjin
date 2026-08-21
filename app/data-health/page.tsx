@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
 import {
   api, useAsync, Card, CardH, Badge, Empty, Note, Spinner,
@@ -11,6 +11,10 @@ export default function DataHealthPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const { data, loading, error, reload } = useAsync(() => api('/api/data-health'), []);
+  // 「这些数字是什么时候的」必须写出来。不写的话，导完数据过来看见数字没变，
+  // 根本分不清是「数据没进去」还是「页面没刷新」—— 这两件事的处理方式完全不同。
+  const [at, setAt] = useState<string>('');
+  useEffect(() => { if (data) setAt(new Date().toLocaleTimeString('zh-CN')); }, [data]);
 
   const mergeAll = async () => {
     setBusy(true); setMsg(null);
@@ -39,9 +43,17 @@ export default function DataHealthPage() {
     <>
       <Topbar title="数据体检" sub="重复型号、异常价格与数据完整度" />
       <div className="page">
+        <div className="row" style={{ marginBottom: 12, alignItems: 'center' }}>
+          <button className="btn" onClick={() => reload()} disabled={loading || busy}>
+            {loading ? <><span className="spin" /> 读取中…</> : '↻ 刷新'}
+          </button>
+          <span className="muted small">
+            {at ? `数据读取于 ${at}` : '尚未读取'}
+          </span>
+        </div>
         <Note kind="new">
-          <b>新模块。</b>下面全部是对生产库的实时扫描结果，不是估算。
-          这些问题会直接影响询价报价的准确度。
+          <b>每次打开或点刷新都会重新扫一遍生产库</b>，不是缓存也不是估算。
+          刚导完数据想确认有没有进去，点一下「刷新」看数字变没变就行。
         </Note>
 
         {loading && <Card style={{ marginTop: 14 }}><div className="card-b"><Spinner /></div></Card>}
