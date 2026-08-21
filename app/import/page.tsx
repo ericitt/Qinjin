@@ -51,7 +51,14 @@ export default function ImportPage() {
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<any>(null);
   const [over, setOver] = useState(false);
+  // 一键导入全程只要几秒，但中间发生了什么必须看得见 ——
+  // 否则文件一拖进去就「好了」，出问题根本不知道是哪一步歪的
+  const [steps, setSteps] = useState<{ t: string; s: 'run' | 'ok' | 'fail'; d?: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const begin = (t: string) => setSteps((x) => [...x, { t, s: 'run' }]);
+  const finish = (s: 'ok' | 'fail', d?: string) =>
+    setSteps((x) => x.map((y, i) => (i === x.length - 1 ? { ...y, s, d } : y)));
 
   const batches = useAsync(() => api('/api/import/batches'), [done]);
 
@@ -64,9 +71,11 @@ export default function ImportPage() {
    * 自动识别模式下，解析完直接开跑，真正做到「丢进来就完事」。
    */
   const readFile = async (f: File) => {
-    setFileName(f.name); setPreview(null); setDone(null); setErr(null); setBusy(true);
+    setFileName(f.name); setPreview(null); setDone(null); setErr(null);
+    setSteps([]); setBusy(true);
     let t = '';
     try {
+      begin('读取文件');
       const fd = new FormData();
       fd.append('file', f);
       const r = await fetch('/api/import/parse-file', { method: 'POST', body: fd });
@@ -74,8 +83,13 @@ export default function ImportPage() {
       if (!r.ok) throw new Error(j?.error || `解析失败（${r.status}）`);
       t = String(j.text || '');
       setText(t);
-    } catch (e: any) { setErr(e.message); return; } finally { setBusy(false); }
-    if (kind === 'auto' && t.trim()) await oneClick(t, f.name);
+      const lines = t.split('\n').filter((x) => x.trim()).length;
+      finish('ok', `${f.name} · ${Math.max(0, lines - 1)} 行数据`);
+    } catch (e: any) {
+      finish('fail', e.message); setErr(e.message); setBusy(false); return;
+    }
+    setBusy(false);
+    if (kind === 'auto' && t.trim()) await oneClick(t, f.name, true);
   };
 
   const doPreview = async (k = kind) => {
@@ -102,6 +116,8 @@ export default function ImportPage() {
         method: 'POST', body: JSON.stringify({ kind: preview?.kind || kind, text, mapping, fileName }),
       });
       setDone({ ...r, label: preview?.detected?.label });
+      setSteps((x) => [...x, { t: '写入数据库', s: 'ok', d: `批次 ${r.batchNo} · 写入 ${r.written} 条` }]);
+      batches.reload();
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
@@ -110,13 +126,27 @@ export default function ImportPage() {
    * 只有「有把握 + 零拒绝 + 必填字段齐」才会自动写库；
    * 但凡有一点不确定就停在预览页让人确认——宁可多点一下，也不要悄悄导错。
    */
-  const oneClick = async (t = text, f = '') => {
+  const oneClick = async (t = text, f = '', keepSteps = false) => {
     setBusy(true); setErr(null); setDone(null);
+    if (!keepSteps) setSteps([]);
     try {
+      begin('识别类型');
       const p: any = await api('/api/import/preview', {
         method: 'POST', body: JSON.stringify({ kind, text: t }),
       });
       setPreview(p); setMapping(p.suggestedMapping || {});
+      const src = p.detected?.source === 'learned' ? '沿用上次这类表的做法'
+                : p.detected?.confident ? '有把握' : '不太确定';
+      finish('ok', `${p.detected?.label || KINDS.find((k) => k.k === p.kind)?.t || p.kind} · ${src}`);
+
+      begin('字段映射');
+      const mapped = Object.keys(p.suggestedMapping || {}).length;
+      const miss = p.missingRequired?.length ? `，缺必填：${p.missingRequired.join('、')}` : '';
+      finish(p.missingRequired?.length ? 'fail' : 'ok', `对上 ${mapped} 个字段${miss}`);
+
+      begin('数据校验');
+      finish('ok', `共 ${p.rowTotal} 行：可入库 ${p.okCount}，拒绝 ${p.rejectCount}`);
+
       // 允许少量拒绝行：ERP 导出的表几乎都带「合计」行、零单价行这类杂质，
       // 要求零拒绝的话一键导入基本永远不会触发。超过 5% 就说明这份表有系统性问题，
       // 那时候停下来让人看一眼才是对的。
@@ -124,12 +154,27 @@ export default function ImportPage() {
       const sure = p.okCount > 0 && badRate <= 0.05
         && !(p.missingRequired?.length) && !p.kindHint
         && (kind !== 'auto' || p.detected?.confident);
-      if (!sure) return;   // 停在预览，等人确认
+      if (!sure) {
+        const why = p.missingRequired?.length ? '缺少必填字段'
+          : p.kindHint ? '类型可能选错了'
+          : !p.okCount ? '没有任何一行能入库'
+          : badRate > 0.05 ? `拒绝率 ${(badRate * 100).toFixed(1)}% 偏高`
+          : '和次选类型太接近，不敢确定';
+        begin('等待确认');
+        finish('fail', `${why} —— 请核对下面的映射与校验结果，确认无误后点「确认入库」`);
+        return;
+      }
+
+      begin('写入数据库');
       const r: any = await api('/api/import/commit', {
         method: 'POST', body: JSON.stringify({ kind: p.kind, text: t, mapping: p.suggestedMapping, fileName: f || fileName }),
       });
+      finish('ok', `批次 ${r.batchNo} · 写入 ${r.written} 条`);
       setDone({ ...r, label: p.detected?.label, auto: true });
-    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+      batches.reload();   // 不能只靠 done 变化触发，写完立刻拉一次最稳
+    } catch (e: any) {
+      finish('fail', e.message); setErr(e.message);
+    } finally { setBusy(false); }
   };
 
   const rollback = async (batchNo: string) => {
@@ -140,7 +185,9 @@ export default function ImportPage() {
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
-  const reset = () => { setText(''); setFileName(''); setPreview(null); setDone(null); setErr(null); };
+  const reset = () => {
+    setText(''); setFileName(''); setPreview(null); setDone(null); setErr(null); setSteps([]);
+  };
 
   return (
     <>
@@ -164,6 +211,24 @@ export default function ImportPage() {
         </div>
 
         {err && <Note kind="err">{err}</Note>}
+
+        {steps.length > 0 && (
+          <Card style={{ marginTop: 14 }}>
+            <CardH title="处理过程" sub="每一步做了什么、判断依据是什么" />
+            <div className="card-b">
+              {steps.map((st, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '5px 0' }}>
+                  <span style={{ width: 16, flex: 'none', textAlign: 'center',
+                    color: st.s === 'ok' ? 'var(--green)' : st.s === 'fail' ? 'var(--amber)' : 'var(--muted)' }}>
+                    {st.s === 'run' ? <span className="spin" /> : st.s === 'ok' ? '✓' : '!'}
+                  </span>
+                  <b style={{ fontSize: 13, width: 84, flex: 'none' }}>{st.t}</b>
+                  <span className="muted small">{st.d || (st.s === 'run' ? '处理中…' : '')}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
 
         <div className="grid g2" style={{ alignItems: 'start' }}>
           <Card>
@@ -398,6 +463,18 @@ export default function ImportPage() {
               <CardH title="导入历史" sub="每批都可撤销" />
               <div className="card-b flush">
                 {batches.loading && <div className="card-b"><Spinner /></div>}
+                {/* 历史读不出来时必须说出来。之前这里静默失败，
+                    看上去就像「导入了但没记录」，其实是查询报错了 */}
+                {batches.error && (
+                  <div className="card-b">
+                    <Note kind="err">
+                      读取导入历史失败：{batches.error}
+                      <div style={{ marginTop: 8 }}>
+                        <button className="btn sm" onClick={() => batches.reload()}>重试</button>
+                      </div>
+                    </Note>
+                  </div>
+                )}
                 {batches.data?.batches?.length ? (
                   <div className="table-wrap"><table>
                     <thead><tr><th>批次</th><th>类型</th><th className="num">写入</th>
@@ -417,7 +494,7 @@ export default function ImportPage() {
                       </tr>
                     ))}</tbody>
                   </table></div>
-                ) : !batches.loading && <Empty icon="↥" text="还没有导入过数据" />}
+                ) : !batches.loading && !batches.error && <Empty icon="↥" text="还没有导入过数据" />}
               </div>
             </Card>
           </div>
