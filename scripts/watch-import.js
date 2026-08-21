@@ -163,25 +163,24 @@ async function scanOnce() {
       continue;
     }
 
-    const rule = detectKind(e.name);
-    if (!rule) {
-      log(`  ${e.name} 认不出是哪类数据 → 移到「失败」`);
-      moveTo(FAIL_DIR, file,
-        `文件名里没有可识别的关键词。\n请把文件名改成包含以下之一：采购 / 销售(出货) / 供应商 / 客户 / 库存\n例如：销售记录表2026-08.xls`);
-      continue;
-    }
+    // 先按文件名判断；认不出来就交给接口按表头自动识别（kind='auto'）
+    const rule = detectKind(e.name) || { kind: 'auto', match: null, ffill: null };
 
-    log(`  ${e.name} → ${rule.kind}`);
+    log(`  ${e.name} → ${rule.kind === 'auto' ? '自动识别' : rule.kind}`);
     try {
       const res = await importOne(file, rule);
       const dup = res.skippedDup ? `，跳过重复 ${res.skippedDup}` : '';
+      if (rule.kind === 'auto') log(`   自动识别为：${res.kind || '?'}`);
       log(`   ✓ 批次 ${res.batchNo}：写入 ${res.written}${dup}，拒绝 ${res.rejected}（共 ${res.total} 行）`);
       state[hash] = { file: e.name, at: new Date().toISOString(), batch: res.batchNo, written: res.written };
       saveState(state);
       moveTo(DONE_DIR, file);
     } catch (err) {
       log(`   ✗ 失败：${err.message}`);
-      moveTo(FAIL_DIR, file, `导入失败\n时间：${new Date().toLocaleString('zh-CN')}\n类型：${rule.kind}\n原因：${err.message}\n`);
+      moveTo(FAIL_DIR, file,
+        `导入失败\n时间：${new Date().toLocaleString('zh-CN')}\n类型：${rule.kind}\n原因：${err.message}\n\n`
+        + `如果提示「认不出这份表属于哪一类数据」，把文件名改成含以下关键词之一即可：\n`
+        + `采购 / 销售(出货) / 供应商名单 / 供应商 / 客户 / 库存\n`);
     }
   }
 }

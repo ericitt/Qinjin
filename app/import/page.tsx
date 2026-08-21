@@ -36,7 +36,7 @@ TEST-PN-001,0402 100nF 16V,电容,MURATA,0.0089`,
 };
 
 export default function ImportPage() {
-  const [kind, setKind] = useState('purchases');
+  const [kind, setKind] = useState('auto');
   const [text, setText] = useState('');
   const [fileName, setFileName] = useState('');
   const [preview, setPreview] = useState<any>(null);
@@ -51,11 +51,25 @@ export default function ImportPage() {
 
   const step = done ? 4 : preview ? 3 : text ? 2 : 1;
 
-  const readFile = (f: File) => {
-    setFileName(f.name);
-    const r = new FileReader();
-    r.onload = () => { setText(String(r.result || '')); setPreview(null); setDone(null); };
-    r.readAsText(f, 'utf-8');
+  /**
+   * 读文件。所有格式都上传给服务端解析：
+   *  - .xls / .xlsx 直接解析（不用再手动「另存为 CSV」）
+   *  - .csv 也走服务端，因为 Excel 存出来的 CSV 多半是 GBK，浏览器按 UTF-8 读会全是乱码
+   * 自动识别模式下，解析完直接开跑，真正做到「丢进来就完事」。
+   */
+  const readFile = async (f: File) => {
+    setFileName(f.name); setPreview(null); setDone(null); setErr(null); setBusy(true);
+    let t = '';
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      const r = await fetch('/api/import/parse-file', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `解析失败（${r.status}）`);
+      t = String(j.text || '');
+      setText(t);
+    } catch (e: any) { setErr(e.message); return; } finally { setBusy(false); }
+    if (kind === 'auto' && t.trim()) await oneClick(t, f.name);
   };
 
   const doPreview = async (k = kind) => {
@@ -78,9 +92,33 @@ export default function ImportPage() {
     setBusy(true); setErr(null);
     try {
       const r: any = await api('/api/import/commit', {
-        method: 'POST', body: JSON.stringify({ kind, text, mapping, fileName }),
+        // 用 preview.kind（自动识别模式下这是识别出来的类型），不要用界面上的 kind
+        method: 'POST', body: JSON.stringify({ kind: preview?.kind || kind, text, mapping, fileName }),
       });
-      setDone(r);
+      setDone({ ...r, label: preview?.detected?.label });
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  /**
+   * 一键导入：识别类型 → 映射字段 → 校验 → 直接入库，全程不用点。
+   * 只有「有把握 + 零拒绝 + 必填字段齐」才会自动写库；
+   * 但凡有一点不确定就停在预览页让人确认——宁可多点一下，也不要悄悄导错。
+   */
+  const oneClick = async (t = text, f = '') => {
+    setBusy(true); setErr(null); setDone(null);
+    try {
+      const p: any = await api('/api/import/preview', {
+        method: 'POST', body: JSON.stringify({ kind, text: t }),
+      });
+      setPreview(p); setMapping(p.suggestedMapping || {});
+      const sure = p.okCount > 0 && p.rejectCount === 0
+        && !(p.missingRequired?.length) && !p.kindHint
+        && (kind !== 'auto' || p.detected?.confident);
+      if (!sure) return;   // 停在预览，等人确认
+      const r: any = await api('/api/import/commit', {
+        method: 'POST', body: JSON.stringify({ kind: p.kind, text: t, mapping: p.suggestedMapping, fileName: f || fileName }),
+      });
+      setDone({ ...r, label: p.detected?.label, auto: true });
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
@@ -103,6 +141,10 @@ export default function ImportPage() {
           在此之前所有数据只能靠一次性 seed 脚本灌进去，上线后没有任何入口能新增出货记录、
           更新供应商报价或修改物料 —— 数据从落地那天起就开始过期，而且没人能修。
           现在每批导入都有批次号，<b>可预览、可校验、可整批撤销</b>。
+          <br />
+          <b>现在支持一键导入：</b>把龙威导出的 .xls / .xlsx 直接拖进来就行，
+          不用先转 CSV、不用选类型、不用对字段 —— 系统看表头自己判断，
+          有把握且零拒绝就直接入库，拿不准才停下来问你。
         </Note>
 
         <div className="steps" style={{ marginTop: 18 }}>
@@ -115,8 +157,23 @@ export default function ImportPage() {
 
         <div className="grid g2" style={{ alignItems: 'start' }}>
           <Card>
-            <CardH title="导入类型" />
+            <CardH title="导入类型" sub="默认自动识别，认不准时再手动选" />
             <div className="card-b">
+              <label style={{
+                display: 'flex', gap: 10, padding: 11, borderRadius: 6, marginBottom: 8, cursor: 'pointer',
+                fontWeight: 400, border: `1px solid ${kind === 'auto' ? 'var(--accent)' : 'var(--border)'}`,
+                background: kind === 'auto' ? 'var(--accent-bg, transparent)' : 'transparent',
+              }}>
+                <input type="radio" name="kind" checked={kind === 'auto'} style={{ marginTop: 3 }}
+                  onChange={() => { setKind('auto'); reset(); }} />
+                <div>
+                  <b style={{ fontSize: 13 }}>⚡ 自动识别（推荐）</b>
+                  <div className="muted small">直接丢文件进来，系统看表头自己判断是哪一类数据</div>
+                  <div className="small" style={{ color: 'var(--blue)', marginTop: 2 }}>
+                    识别得有把握、且没有一行会被拒绝时，直接入库；否则停下来让你确认
+                  </div>
+                </div>
+              </label>
               {KINDS.map((k) => (
                 <label key={k.k} style={{
                   display: 'flex', gap: 10, padding: 11, borderRadius: 6, marginBottom: 8, cursor: 'pointer',
@@ -138,12 +195,14 @@ export default function ImportPage() {
                 onDragLeave={() => setOver(false)}
                 onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) readFile(f); }}>
                 <div style={{ fontSize: 22, opacity: .35, marginBottom: 6 }}>↥</div>
-                <div style={{ fontSize: 13 }}>{fileName || '拖拽 CSV 文件到此处，或点击选择'}</div>
+                <div style={{ fontSize: 13 }}>
+                  {fileName || '把 ERP 导出的文件拖到这里，或点击选择'}
+                </div>
                 <div className="muted small" style={{ marginTop: 4 }}>
-                  支持 .csv / .tsv（Excel 请先另存为 CSV UTF-8）
+                  支持 .xls / .xlsx / .csv / .tsv，中文编码自动处理，不用先另存为
                 </div>
               </div>
-              <input ref={fileRef} type="file" accept=".csv,.tsv,.txt" style={{ display: 'none' }}
+              <input ref={fileRef} type="file" accept=".xls,.xlsx,.csv,.tsv,.txt" style={{ display: 'none' }}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); }} />
 
               <div className="field" style={{ marginTop: 12 }}>
@@ -155,10 +214,18 @@ export default function ImportPage() {
               <div className="row">
                 {/* 必须包一层箭头函数：doPreview 的第一个参数是 kind，
                     直接传给 onClick 的话 React 会把 MouseEvent 当成 kind 传进去 */}
-                <button className="btn primary" onClick={() => doPreview()} disabled={busy || !text.trim()}>
-                  {busy && !preview ? <><span className="spin" /> 解析中…</> : '解析并校验 →'}
+                <button className="btn primary" onClick={() => oneClick()} disabled={busy || !text.trim()}>
+                  {busy ? <><span className="spin" /> 处理中…</>
+                        : kind === 'auto' ? '⚡ 一键导入' : '解析并校验 →'}
                 </button>
-                <button className="btn" onClick={() => { setText(SAMPLE[kind]); setPreview(null); setDone(null); }}>
+                {kind === 'auto' && (
+                  <button className="btn" onClick={() => doPreview()} disabled={busy || !text.trim()}>
+                    只预览不入库
+                  </button>
+                )}
+                <button className="btn" onClick={() => {
+                  setText(SAMPLE[kind] || SAMPLE.supplier_quotes); setPreview(null); setDone(null);
+                }}>
                   填入示例
                 </button>
                 {text && <button className="btn ghost" onClick={reset}>清空</button>}
@@ -171,8 +238,12 @@ export default function ImportPage() {
               <Card style={{ marginBottom: 14 }}>
                 <CardH title="4 · 入库完成" />
                 <div className="card-b">
-                  <Note><b>批次 {done.batchNo}</b> 已写入 {int(done.written)} 条，
-                    拒绝 {int(done.rejected)} 条（共 {int(done.total)} 行）。</Note>
+                  <Note>
+                    {done.auto && <><b>已自动识别为「{done.label}」并入库。</b><br /></>}
+                    <b>批次 {done.batchNo}</b> 已写入 {int(done.written)} 条，
+                    拒绝 {int(done.rejected)} 条（共 {int(done.total)} 行）。
+                    {done.skippedDup > 0 && <>其中 {int(done.skippedDup)} 条因为已经存在被跳过。</>}
+                  </Note>
                   <div className="row" style={{ marginTop: 12 }}>
                     <button className="btn danger" onClick={() => rollback(done.batchNo)} disabled={busy}>
                       撤销这一批
@@ -184,7 +255,8 @@ export default function ImportPage() {
             ) : preview ? (
               <>
                 <Card style={{ marginBottom: 14 }}>
-                  <CardH title="2 · 字段映射" sub={`${fileName || '粘贴内容'} · ${int(preview.rowTotal)} 行`} />
+                  <CardH title="2 · 字段映射"
+                    sub={`${preview.detected?.label || ''} · ${fileName || '粘贴内容'} · ${int(preview.rowTotal)} 行`} />
                   <div className="card-b flush">
                     <div className="table-wrap"><table>
                       <thead><tr><th>目标字段</th><th>来源列</th><th>示例值</th></tr></thead>
@@ -215,6 +287,24 @@ export default function ImportPage() {
                 <Card>
                   <CardH title="3 · 校验结果" />
                   <div className="card-b">
+                    {preview.detected && (
+                      <Note kind={preview.detected.confident ? 'new' : 'warn'}>
+                        {preview.detected.confident
+                          ? <>已识别为<b>「{preview.detected.label}」</b>，字段也已自动对好。</>
+                          : <>看起来像<b>「{preview.detected.label}」</b>，但和
+                              「{preview.detected.candidates?.[1]?.label}」比较接近，没敢直接入库，
+                              请核对下面的字段映射后再点确认。</>}
+                        {!preview.detected.confident && (
+                          <div className="row" style={{ marginTop: 8 }}>
+                            {preview.detected.candidates?.slice(1, 3).map((c: any) => (
+                              <button key={c.kind} className="btn sm" onClick={() => switchKind(c.kind)}>
+                                改用「{c.label}」
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </Note>
+                    )}
                     {preview.kindHint && (
                       <Note kind="err">
                         <b>类型可能选错了。</b>这份文件里找不到「{preview.kindHint.missing.join('」「')}」列，

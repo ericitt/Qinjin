@@ -132,8 +132,8 @@ const ALIASES: Record<string, string[]> = {
   ship_date: ['日期', '出货日期', '发货日期', 'date', '出库日期'],
   customer: ['客户', '客户名称', '客户简称', 'customer', '购货单位'],
   pn: ['型号', '物料型号', '料号', '规格型号', '供应物料', '供货型号', 'pn', 'part', 'partnumber', '产品型号'],
-  quantity: ['数量', '出货数量', 'qty', 'quantity', '发货数量'],
-  unit_price: ['单价', '售价', '成交价', 'price', '销售单价', '含税单价'],
+  quantity: ['数量', '出货数量', '订单数量', '收货数量', 'qty', 'quantity', '发货数量'],
+  unit_price: ['单价', '售价', '成交价', '税价', '含税价', 'price', '销售单价', '含税单价'],
   unit_cost: ['成本', '成本单价', 'cost', '采购单价'],
   supplier: ['供应商', '供应商名称', '供应商号', 'supplier', '厂商', '供货商'],
   buy_date: ['采购日期', '下单日期', '日期', 'buy_date'],
@@ -317,19 +317,70 @@ export function summarize(issues: RowIssue[]) {
 }
 
 /**
- * 猜这份文件更像哪一种导入类型。
- * 判断依据：该类型的必填字段有多少能在表头里映射上。
- * 用来在用户选错类型时给出提示，而不是甩一堆「缺少必填字段」了事。
+ * 猜这份文件属于哪一种导入类型。
+ *
+ * 早期版本只按「必填字段能映射上几个」打分，实测 9 个真实文件错 5 个：
+ * 「物料主数据」只要求一个型号列，几乎任何表都满足，于是把销售明细也抢了去；
+ * 「供应商档案」和「客户档案」结构完全一样，只靠字段根本分不开。
+ *
+ * 现在用两层信号：
+ *   1. 必填字段必须全部能映射上，否则直接出局
+ *   2. 在此基础上叠加「特征列」得分 —— 既看映射到的字段，也看表头原文的关键词。
+ *      表头里出现「客户」和出现「供应商」，是区分销售/采购最可靠的信号。
+ *   3. 反向信号：供应商档案里不该有型号和单价，出现了就大幅扣分。
  */
+type KindRule = {
+  signals: Partial<Record<string, number>>;   // 映射到的字段 → 加分
+  words: [RegExp, number][];                  // 表头原文关键词 → 加分（可为负）
+};
+
+const KIND_RULES: Record<ImportKind, KindRule> = {
+  shipments: {
+    signals: { customer: 3, unit_cost: 3, ship_date: 2, quantity: 1, unit_price: 1 },
+    words: [[/客户/, 5], [/出货|销售|发货/, 4], [/供应商|供货商/, -6], [/库存|在途|仓库/, -4]],
+  },
+  purchases: {
+    signals: { supplier: 3, buy_date: 2, quantity: 2, currency: 2 },
+    words: [[/采购|进货|收货|订单数量/, 5], [/供应商号/, 4], [/客户/, -6], [/最小包装|代理/, -3]],
+  },
+  supplier_quotes: {
+    signals: { supplier: 3, moq: 2, is_agent: 3, brand: 1, quoted_at: 1 },
+    words: [[/含税|报价|代理|最小包装|供应物料/, 5], [/供应商/, 2], [/客户名称/, -6], [/订单数量|收货/, -4]],
+  },
+  parts: {
+    signals: { spec: 2, cat: 2, stock_qty: 3, catalog_cost: 2, standard_price: 2 },
+    words: [[/库存|现存|在途|仓库|型号明细/, 6], [/客户/, -6], [/供应商号/, -4], [/出货|销售记录/, -4]],
+  },
+  suppliers: {
+    signals: { contact_name: 3, phone: 3, region: 2, payment_terms: 2 },
+    words: [[/供应商|采购员/, 6], [/联系电话|手机号|传真/, 3], [/客户/, -7], [/型号|单价|数量/, -7]],
+  },
+  customers: {
+    signals: { contact_name: 2, phone: 2, level: 2, payment_terms: 2, short_name: 2 },
+    words: [[/客户|业务员/, 6], [/联系电话|手机号|传真/, 3], [/供应商|采购员/, -7], [/型号|单价|数量/, -7]],
+  },
+};
+
 export function guessKind(headers: string[]): { kind: ImportKind; score: number }[] {
+  const joined = headers.join(' ');
   const out: { kind: ImportKind; score: number }[] = [];
+
   for (const k of Object.keys(FIELD_DEFS) as ImportKind[]) {
     const map = suggestMapping(k, headers);
     const req = FIELD_DEFS[k].filter((f) => f.required);
     const hitReq = req.filter((f) => map[f.key]).length;
-    const hitAll = FIELD_DEFS[k].filter((f) => map[f.key]).length;
-    // 必填字段全中才算候选，再用命中总数做细分
-    const score = (req.length ? hitReq / req.length : 0) * 100 + hitAll;
+
+    // 必填字段没配齐 → 不是这一类
+    if (hitReq < req.length) { out.push({ kind: k, score: 0 }); continue; }
+
+    const rule = KIND_RULES[k];
+    let score = 10;                                   // 必填齐全的基础分
+    for (const [field, w] of Object.entries(rule.signals)) {
+      if (map[field]) score += w as number;
+    }
+    for (const [re, w] of rule.words) {
+      if (re.test(joined)) score += w;
+    }
     out.push({ kind: k, score });
   }
   return out.sort((a, b) => b.score - a.score);
