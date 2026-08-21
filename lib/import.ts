@@ -26,14 +26,21 @@ export const FIELD_DEFS: Record<ImportKind, FieldDef[]> = {
     { key: 'unit_price', label: '单价', required: true },
     { key: 'unit_cost', label: '成本单价', required: false },
   ],
+  // 对齐公司「供应商名单」那张表的列：
+  // 供应商 / 是否代理商 / 供应物料 / 含税价格 / 品牌 / 封装 / 最小包装 / 日期 / 备注
+  // 这张表是分组报表，供应商一栏只在每组第一行填，导入时会自动向下填充。
   supplier_quotes: [
-    { key: 'supplier', label: '供应商名称', required: true },
-    { key: 'pn', label: '物料型号', required: true },
-    { key: 'price', label: '单价', required: true },
+    { key: 'supplier', label: '供应商', required: true, hint: '只在每组第一行填也可以，会自动向下填充' },
+    { key: 'pn', label: '供应物料', required: true, hint: '型号' },
+    { key: 'price', label: '含税价格', required: true },
+    { key: 'brand', label: '品牌', required: false, hint: '会用来补全物料的品牌' },
+    { key: 'pkg', label: '封装', required: false },
+    { key: 'moq', label: '最小包装', required: false, hint: '起订量' },
+    { key: 'quoted_at', label: '日期', required: false, hint: '报价日期' },
+    { key: 'is_agent', label: '是否代理商', required: false },
+    { key: 'notes', label: '备注', required: false },
     { key: 'currency', label: '币种', required: false, hint: '默认 CNY' },
-    { key: 'moq', label: '最小起订', required: false },
     { key: 'lead_time_days', label: '交期(天)', required: false },
-    { key: 'quoted_at', label: '报价日期', required: false },
     { key: 'valid_until', label: '有效期至', required: false },
   ],
   // 采购单据：ERP 直接导出的「采购记录」，比单独维护一张报价表现实得多 ——
@@ -124,18 +131,19 @@ export function parseDelimited(text: string): string[][] {
 const ALIASES: Record<string, string[]> = {
   ship_date: ['日期', '出货日期', '发货日期', 'date', '出库日期'],
   customer: ['客户', '客户名称', '客户简称', 'customer', '购货单位'],
-  pn: ['型号', '物料型号', '料号', '规格型号', 'pn', 'part', 'partnumber', '产品型号'],
+  pn: ['型号', '物料型号', '料号', '规格型号', '供应物料', '供货型号', 'pn', 'part', 'partnumber', '产品型号'],
   quantity: ['数量', '出货数量', 'qty', 'quantity', '发货数量'],
   unit_price: ['单价', '售价', '成交价', 'price', '销售单价', '含税单价'],
   unit_cost: ['成本', '成本单价', 'cost', '采购单价'],
   supplier: ['供应商', '供应商名称', '供应商号', 'supplier', '厂商', '供货商'],
   buy_date: ['采购日期', '下单日期', '日期', 'buy_date'],
   pkg: ['封装', '包装', 'package', 'pkg'],
-  price: ['单价', '报价', '价格', 'price', '含税单价'],
+  price: ['单价', '报价', '价格', '含税价格', '含税单价', '未税价', 'price'],
   currency: ['币种', '货币', 'currency'],
-  moq: ['起订', '最小起订', '起订量', 'moq'],
+  moq: ['起订', '最小起订', '起订量', '最小包装', '包装量', 'moq'],
   lead_time_days: ['交期', '货期', '交货期', 'leadtime', 'lead_time'],
   quoted_at: ['报价日期', '报价时间', 'quote_date', '日期'],
+  is_agent: ['是否代理商', '代理商', '是否代理'],
   valid_until: ['有效期', '有效期至', '报价有效期'],
   spec: ['规格', '规格描述', '描述', 'spec', '说明'],
   cat: ['分类', '类别', '品类', 'category', 'cat'],
@@ -172,6 +180,12 @@ const toNum = (v: any): number | null => {
   if (v === null || v === undefined) return null;
   const s = String(v).replace(/[,，¥￥$\s]/g, '');
   if (!s) return null;
+  // 供应商报价表里常把含税价写成算式，比如「30*1.13」（未税 × 税率），这里直接算出来
+  const mul = /^(\d+(?:\.\d+)?)[*x×](\d+(?:\.\d+)?)$/i.exec(s);
+  if (mul) {
+    const r = Number(mul[1]) * Number(mul[2]);
+    return Number.isFinite(r) ? Math.round(r * 1e6) / 1e6 : null;
+  }
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 };
@@ -184,6 +198,13 @@ const toDate = (v: any): string | null => {
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 };
 
+/** 分组报表里只在每组第一行填写的列 —— 导入前要向下填充，否则大部分行会因为缺必填项被拒 */
+const GROUPED_FIELDS: Partial<Record<ImportKind, string>> = {
+  supplier_quotes: 'supplier',
+  purchases: 'supplier',
+  shipments: 'customer',
+};
+
 export function buildRows(kind: ImportKind, table: string[][], mapping: Record<string, string>) {
   const headers = table[0];
   const idx: Record<string, number> = {};
@@ -193,6 +214,18 @@ export function buildRows(kind: ImportKind, table: string[][], mapping: Record<s
   }
   const rows: ParsedRow[] = [];
   const issues: RowIssue[] = [];
+
+  // 分组报表向下填充：公司的「供应商名单」「采购记录」「销售明细」都是这种格式，
+  // 同一个供应商/客户只在该组第一行写名字，后面留空。不填充的话大部分行会被判缺必填字段。
+  const gKey = GROUPED_FIELDS[kind];
+  const gIdx = gKey !== undefined ? idx[gKey] : undefined;
+  if (gIdx !== undefined && gIdx >= 0) {
+    let last = '';
+    for (let r = 1; r < table.length; r++) {
+      const v = String(table[r][gIdx] ?? '').trim();
+      if (v) last = v; else if (last) table[r][gIdx] = last;
+    }
+  }
 
   for (let r = 1; r < table.length; r++) {
     const raw = table[r];

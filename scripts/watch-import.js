@@ -41,6 +41,8 @@ const STATE_FILE = path.join(INBOX, '.已处理.json');
 const RULES = [
   { kind: 'purchases',  match: /采购|进货|收货/,        ffill: '供应商号|供应商' },
   { kind: 'shipments',  match: /销售|出货|发货/,        ffill: '客户名称|客户' },
+  // 「供应商名单/报价」是报价表，必须排在「供应商档案」前面，否则会被后者抢走
+  { kind: 'supplier_quotes', match: /供应商名单|报价|询价单价/, ffill: '供应商' },
   { kind: 'suppliers',  match: /供应商/,               ffill: null },
   { kind: 'customers',  match: /客户/,                 ffill: null },
   { kind: 'parts',      match: /库存|物料|型号明细/,     ffill: null },
@@ -52,6 +54,8 @@ const RENAME = {
   shipments: { '税价': '单价', '订单数量': '数量', '单位成本': '成本' },
   purchases: { '供应商号': '供应商', '订单数量': '数量' },
   parts:     { '型号描述': '规格', '品牌': '品牌', '成本': '目录成本', '销售价': '标准售价', '数量': '库存' },
+  // 供应商名单的列名已经能被自动映射识别，这里不用改名
+  supplier_quotes: {},
   suppliers: { '编号': '供应商名称', '名称': '公司全称', '联系电话1': '电话', '地区名称': '地区' },
   customers: { '编号': '客户全称', '名称': '公司全称', '联系电话1': '电话', '地区名称': '地区' },
 };
